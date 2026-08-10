@@ -11,7 +11,7 @@
     <img alt="Node.js 20 or newer" src="https://img.shields.io/badge/Node.js-%E2%89%A520-339933?style=flat-square&logo=nodedotjs&logoColor=white">
     <img alt="Zero dependencies" src="https://img.shields.io/badge/dependencies-zero-22d3ee?style=flat-square">
     <img alt="OpenCode workflow" src="https://img.shields.io/badge/OpenCode-workflow-111827?style=flat-square">
-    <img alt="34 tests passing" src="https://img.shields.io/badge/tests-34%20passing-16a34a?style=flat-square">
+    <img alt="Tests passing" src="https://img.shields.io/badge/tests-passing-16a34a?style=flat-square">
   </p>
   <p>
     <a href="#quick-start">Quick start</a> &middot;
@@ -201,7 +201,7 @@ Reviewable artifacts and private runtime state remain separated:
 | `local` | Adds `/.phasecraft/` to the repository-local `.git/info/exclude`. |
 | `reviewable` | Excludes only `/.phasecraft/.local/`; decisions, evidence, plans, and verification can be reviewed or committed manually. |
 
-Markdown is authoritative. `roadmap.html` and `plan.html` are escaped, deterministic, offline derivatives bound to their Markdown SHA-256.
+Markdown is authoritative. `roadmap.html` is a strategic phase atlas, while `plan.html` is an execution cockpit for change deltas, requirement coverage, task flow, file impact, risks, checks, and commits. Both are escaped, deterministic, offline derivatives bound to their Markdown SHA-256; dependency diagrams appear only when they add structural information.
 
 <a id="safety-model"></a>
 

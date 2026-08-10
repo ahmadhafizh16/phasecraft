@@ -203,7 +203,12 @@ The section may contain `None.` or entries:
 
 ## HTML Derivative
 
-`roadmap.html` and `plan.html` are generated in both artifact modes. They are standalone UTF-8 documents with inline CSS, no JavaScript, no remote assets, and escaped source text.
+`roadmap.html` and `plan.html` are generated in both artifact modes. They are standalone UTF-8 documents with inline CSS, no JavaScript, no remote assets, and escaped source text. They do not share one generic card layout:
+
+- `roadmap.html` uses the `roadmap-atlas` view: phase topology, statuses, requirement ownership, exit evidence, strategic risks, and open unknowns.
+- `plan.html` uses the `execution-cockpit` view: technical before/after deltas, requirement coverage, task queue, file impact, risk controls, manual checks, and commit groups.
+- A deterministic inline SVG dependency graph appears when there is more than one phase/task or an explicit dependency. A single unrelated item remains diagram-free.
+- Diagram nodes and edges are derived only from validated identifiers and `Depends on` fields; the renderer never invents relationships.
 
 The head includes:
 

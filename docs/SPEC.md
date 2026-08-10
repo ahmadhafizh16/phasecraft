@@ -56,7 +56,7 @@ Before each network lookup, Discuss presents the question and intended source cl
 
 Plan checks authority drift, maintains the full roadmap, and details only the next executable phase. Each technical change names a file, symbol, evidence-backed before state, labeled proposed after state, and reason. Each task names evidence, dependencies, files, change, checks, and commit group. Risks include impact, mitigation, possible solution, and evidence.
 
-Plan validates restricted Markdown and generates `roadmap.html` and `plan.html` in both artifact modes.
+Plan validates restricted Markdown and generates `roadmap.html` and `plan.html` in both artifact modes. The two derivatives are intentionally different: the roadmap is a strategic phase/dependency atlas, while the plan is an execution cockpit for change deltas, requirement coverage, task order, file impact, risks, checks, and commit groups. Native dependency diagrams are generated only when multiple nodes or declared dependencies make them informative.
 
 ### Verify Plan
 

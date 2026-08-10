@@ -13,14 +13,17 @@ export function escapeHtml(value) {
 }
 
 function renderInline(value) {
-  const escaped = escapeHtml(value);
-  return escaped.replace(/`([^`]+)`/gu, "<code>$1</code>");
+  return escapeHtml(value)
+    .replace(/`([^`]+)`/gu, "<code>$1</code>")
+    .replace(/\b(REQ|CH|T|C|M|E|D|P|U|R)-(\d{2,})\b/gu, (_, prefix, number) => (
+      `<span class="identity identity-${prefix.toLowerCase()}">${prefix}-${number}</span>`
+    ));
 }
 
 function renderContent(content) {
   const output = [];
   let listOpen = false;
-  for (const { text } of content) {
+  for (const { text } of content ?? []) {
     const trimmed = text.trim();
     const list = trimmed.match(/^-\s+(.+)$/u);
     if (list) {
@@ -41,93 +44,574 @@ function renderContent(content) {
   return output.join("\n");
 }
 
-function categoryClass(heading) {
-  const prefix = heading.split("-")[0].toLowerCase();
-  return ["t", "ch", "r", "c", "m", "p"].includes(prefix) ? `card-${prefix}` : "card-default";
+function getSection(document, name) {
+  return document.sections.get(name) ?? { name, content: [], entries: [] };
 }
 
-function renderDocument(document) {
-  const sections = [];
-  for (const section of document.sections.values()) {
-    const body = [];
-    const content = renderContent(section.content);
-    if (content) body.push(`<div class="section-copy">${content}</div>`);
-    if (section.entries.length > 0) {
-      body.push('<div class="card-grid">');
-      for (const entry of section.entries) {
-        body.push(`<article class="card ${categoryClass(entry.heading)}">`);
-        body.push(`<h3>${renderInline(entry.heading)}</h3>`);
-        if (entry.fields.size > 0) {
-          body.push("<dl>");
-          for (const [name, field] of entry.fields) {
-            body.push(`<dt>${escapeHtml(name)}</dt><dd>${renderInline(field.value)}</dd>`);
-          }
-          body.push("</dl>");
-        }
-        const entryContent = renderContent(entry.content);
-        if (entryContent) body.push(`<div class="entry-copy">${entryContent}</div>`);
-        body.push("</article>");
-      }
-      body.push("</div>");
-    }
-    sections.push(`<section id="${escapeHtml(section.name.toLowerCase().replace(/[^a-z0-9]+/gu, "-"))}">
-<h2>${escapeHtml(section.name)}</h2>
-${body.join("\n")}
-</section>`);
+function getField(entry, name) {
+  return entry.fields.get(name.toLowerCase())?.value ?? "";
+}
+
+function entryId(entry) {
+  return entry.heading.split(":")[0].trim();
+}
+
+function entryTitle(entry) {
+  const separator = entry.heading.indexOf(":");
+  return separator === -1 ? entry.heading : entry.heading.slice(separator + 1).trim();
+}
+
+function splitList(value) {
+  if (!value || value.trim().toLowerCase() === "none") return [];
+  return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function requirementItems(section) {
+  return section.content.flatMap(({ text }) => {
+    const match = text.match(/^-\s+(REQ-\d{3}):\s+(.+)$/u);
+    return match ? [{ id: match[1], text: match[2] }] : [];
+  });
+}
+
+function sectionIsNone(section) {
+  return section.entries.length === 0 && section.content
+    .map(({ text }) => text.trim())
+    .filter(Boolean)
+    .every((text) => /^none\.?$/iu.test(text));
+}
+
+function renderChips(values, className = "chip") {
+  if (values.length === 0) return '<span class="muted">none</span>';
+  return `<span class="chip-list">${values.map((value) => `<span class="${className}">${renderInline(value)}</span>`).join("")}</span>`;
+}
+
+function renderChecks(value) {
+  const checks = value.split(";").map((item) => item.trim()).filter(Boolean);
+  return `<ul class="check-list">${checks.map((check) => `<li>${renderInline(check)}</li>`).join("")}</ul>`;
+}
+
+function truncate(value, length = 27) {
+  return value.length <= length ? value : `${value.slice(0, length - 3)}...`;
+}
+
+function dependencyGraph(entries, options) {
+  const dependencies = new Map(entries.map((entry) => [
+    entryId(entry),
+    splitList(getField(entry, "Depends on")),
+  ]));
+  const needsDiagram = entries.length > 1 || [...dependencies.values()].some((values) => values.length > 0);
+  if (!needsDiagram) return "";
+
+  const ids = new Set(entries.map(entryId));
+  const depthCache = new Map();
+  function depth(id, visiting = new Set()) {
+    if (depthCache.has(id)) return depthCache.get(id);
+    if (visiting.has(id)) return 0;
+    const nextVisiting = new Set(visiting).add(id);
+    const parentDepths = (dependencies.get(id) ?? [])
+      .filter((dependency) => ids.has(dependency))
+      .map((dependency) => depth(dependency, nextVisiting) + 1);
+    const value = parentDepths.length > 0 ? Math.max(...parentDepths) : 0;
+    depthCache.set(id, value);
+    return value;
   }
-  return sections.join("\n");
+
+  const columns = new Map();
+  for (const entry of entries) {
+    const column = depth(entryId(entry));
+    if (!columns.has(column)) columns.set(column, []);
+    columns.get(column).push(entry);
+  }
+
+  const nodeWidth = 196;
+  const nodeHeight = 76;
+  const columnGap = 76;
+  const rowGap = 28;
+  const padding = 36;
+  const maxColumn = Math.max(...columns.keys());
+  const maxRows = Math.max(...[...columns.values()].map((column) => column.length));
+  const width = padding * 2 + (maxColumn + 1) * nodeWidth + maxColumn * columnGap;
+  const height = Math.max(180, padding * 2 + maxRows * nodeHeight + Math.max(0, maxRows - 1) * rowGap);
+  const positions = new Map();
+
+  for (const [column, columnEntries] of columns) {
+    const totalHeight = columnEntries.length * nodeHeight + Math.max(0, columnEntries.length - 1) * rowGap;
+    const startY = (height - totalHeight) / 2;
+    columnEntries.forEach((entry, row) => {
+      positions.set(entryId(entry), {
+        x: padding + column * (nodeWidth + columnGap),
+        y: startY + row * (nodeHeight + rowGap),
+      });
+    });
+  }
+
+  const markerId = `${options.kind}-dependency-arrow`;
+  const edges = [];
+  for (const entry of entries) {
+    const destination = positions.get(entryId(entry));
+    for (const dependency of dependencies.get(entryId(entry)) ?? []) {
+      const source = positions.get(dependency);
+      if (!source) continue;
+      const sourceX = source.x + nodeWidth;
+      const sourceY = source.y + nodeHeight / 2;
+      const destinationX = destination.x;
+      const destinationY = destination.y + nodeHeight / 2;
+      const bend = Math.max(28, (destinationX - sourceX) / 2);
+      edges.push(
+        `<path class="graph-edge" d="M ${sourceX} ${sourceY} C ${sourceX + bend} ${sourceY}, ${destinationX - bend} ${destinationY}, ${destinationX} ${destinationY}" marker-end="url(#${markerId})"/>`,
+      );
+    }
+  }
+
+  const nodes = entries.map((entry) => {
+    const id = entryId(entry);
+    const position = positions.get(id);
+    const subtitle = options.subtitle(entry);
+    return `<g class="graph-node" transform="translate(${position.x} ${position.y})">
+      <rect width="${nodeWidth}" height="${nodeHeight}" rx="12"/>
+      <text class="graph-id" x="16" y="24">${escapeHtml(id)}</text>
+      <text class="graph-title" x="16" y="47">${escapeHtml(truncate(entryTitle(entry)))}</text>
+      <text class="graph-subtitle" x="16" y="65">${escapeHtml(truncate(subtitle, 31))}</text>
+    </g>`;
+  }).join("\n");
+
+  return `<div class="diagram-shell" data-diagram="${escapeHtml(options.kind)}-dependencies">
+    <div class="diagram-heading"><span>${escapeHtml(options.label)}</span><small>Arrows show declared dependencies</small></div>
+    <div class="diagram-scroll">
+      <svg class="dependency-graph" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(options.label)} dependency diagram">
+        <title>${escapeHtml(options.label)} dependency diagram</title>
+        <defs><marker id="${markerId}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z"/></marker></defs>
+        ${edges.join("\n")}
+        ${nodes}
+      </svg>
+    </div>
+  </div>`;
 }
 
-const STYLES = `
-:root {
-  color-scheme: light;
-  --ink: #18201d;
-  --muted: #65716b;
-  --paper: #f4f1e8;
-  --panel: #fffdf7;
-  --line: #d9d2c2;
-  --green: #146b52;
-  --orange: #b95124;
-  --blue: #285f8f;
-  --violet: #6d4c87;
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+function metric(label, value, detail = "") {
+  return `<div class="metric"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span>${detail ? `<small>${escapeHtml(detail)}</small>` : ""}</div>`;
 }
+
+function renderRoadmap(validation) {
+  const document = validation.document;
+  const objective = getSection(document, "Objective");
+  const requirements = requirementItems(getSection(document, "Requirements"));
+  const phases = getSection(document, "Phases").entries;
+  const risks = getSection(document, "Risks");
+  const unknowns = getSection(document, "Unknowns");
+  const activeCount = phases.filter((phase) => /next|active|current|in progress/iu.test(getField(phase, "Status"))).length;
+  const completedCount = phases.filter((phase) => /complete|done|verified|shipped/iu.test(getField(phase, "Status"))).length;
+
+  const graph = dependencyGraph(phases, {
+    kind: "roadmap",
+    label: "Phase architecture",
+    subtitle: (entry) => getField(entry, "Status"),
+  });
+
+  const phaseCards = phases.map((phase, index) => {
+    const status = getField(phase, "Status");
+    const statusClass = status.toLowerCase().replace(/[^a-z0-9]+/gu, "-");
+    return `<article class="phase-card">
+      <div class="phase-card-top"><span class="phase-number">${String(index + 1).padStart(2, "0")}</span><span class="status status-${escapeHtml(statusClass)}">${renderInline(status)}</span></div>
+      <p class="phase-id">${renderInline(entryId(phase))}</p>
+      <h3>${renderInline(entryTitle(phase))}</h3>
+      <p class="phase-goal">${renderInline(getField(phase, "Goal"))}</p>
+      <dl>
+        <dt>Requirements</dt><dd>${renderChips(splitList(getField(phase, "Requirements")))}</dd>
+        <dt>Depends on</dt><dd>${renderChips(splitList(getField(phase, "Depends on")))}</dd>
+        <dt>Exit evidence</dt><dd>${renderInline(getField(phase, "Exit evidence"))}</dd>
+      </dl>
+    </article>`;
+  }).join("\n");
+
+  const requirementCards = requirements.map((requirement) => {
+    const owners = phases.filter((phase) => splitList(getField(phase, "Requirements")).includes(requirement.id));
+    return `<article class="requirement-card"><span>${renderInline(requirement.id)}</span><p>${renderInline(requirement.text)}</p><small>${owners.length} phase${owners.length === 1 ? "" : "s"}</small></article>`;
+  }).join("\n");
+
+  const riskCards = risks.entries.map((risk) => `<article class="roadmap-risk">
+    <div><span>${renderInline(entryId(risk))}</span><h3>${renderInline(entryTitle(risk))}</h3></div>
+    <p><strong>Impact</strong>${renderInline(getField(risk, "Impact"))}</p>
+    <p><strong>Mitigation</strong>${renderInline(getField(risk, "Mitigation"))}</p>
+    <p><strong>Possible solution</strong>${renderInline(getField(risk, "Possible solution"))}</p>
+  </article>`).join("\n");
+
+  return `<header class="roadmap-hero">
+    <div class="hero-inner">
+      <div class="eyebrow">Phasecraft roadmap / strategic atlas</div>
+      <h1>${escapeHtml(document.title?.text ?? "Phasecraft roadmap")}</h1>
+      <div class="hero-copy">${renderContent(objective.content)}</div>
+      <div class="metric-row">
+        ${metric("phases", String(phases.length), `${completedCount} completed`)}
+        ${metric("requirements", String(requirements.length), "mapped to phases")}
+        ${metric("risks", String(risks.entries.length), "with controls")}
+        ${metric("active", String(activeCount), "current or next")}
+      </div>
+    </div>
+  </header>
+  <main class="roadmap-main" data-view="roadmap-atlas">
+    <section class="roadmap-section architecture-section">
+      <div class="section-heading"><span>01</span><div><p>Sequence</p><h2>Phase architecture</h2></div></div>
+      ${graph || '<p class="single-note">Single phase roadmap. A dependency diagram will appear when multiple phases or dependencies exist.</p>'}
+    </section>
+    <section class="roadmap-section">
+      <div class="section-heading"><span>02</span><div><p>Delivery path</p><h2>Phase ledger</h2></div></div>
+      <div class="phase-grid">${phaseCards}</div>
+    </section>
+    <section class="roadmap-section">
+      <div class="section-heading"><span>03</span><div><p>Outcome coverage</p><h2>Requirements map</h2></div></div>
+      <div class="requirement-grid">${requirementCards}</div>
+    </section>
+    <section class="roadmap-section split-section">
+      <div>
+        <div class="section-heading compact"><span>04</span><div><p>Controls</p><h2>Strategic risks</h2></div></div>
+        ${sectionIsNone(risks) ? '<p class="empty-state">No roadmap risks recorded.</p>' : `<div class="risk-stack">${riskCards}</div>`}
+      </div>
+      <div>
+        <div class="section-heading compact"><span>05</span><div><p>Discovery queue</p><h2>Open unknowns</h2></div></div>
+        ${sectionIsNone(unknowns) ? '<p class="empty-state resolved">No unresolved roadmap unknowns.</p>' : `<div class="unknown-panel">${renderContent(unknowns.content)}</div>`}
+      </div>
+    </section>
+  </main>`;
+}
+
+function renderPlan(validation) {
+  const document = validation.document;
+  const goal = getSection(document, "Goal");
+  const inputs = getSection(document, "Inputs");
+  const requirements = requirementItems(getSection(document, "Requirements"));
+  const changes = getSection(document, "Technical Design").entries;
+  const tasks = getSection(document, "Tasks").entries;
+  const risks = getSection(document, "Risk Controls").entries;
+  const commits = getSection(document, "Commit Groups").entries;
+  const manualChecks = getSection(document, "Manual Checks");
+  const files = [...new Set(tasks.flatMap((task) => splitList(getField(task, "Files"))))].sort();
+
+  const taskGraph = dependencyGraph(tasks, {
+    kind: "plan",
+    label: "Task execution flow",
+    subtitle: (entry) => getField(entry, "Commit group"),
+  });
+
+  const coverageRows = requirements.map((requirement) => {
+    const coveringTasks = tasks.filter((task) => splitList(getField(task, "Requirements")).includes(requirement.id));
+    const checks = coveringTasks.flatMap((task) => getField(task, "Verification").split(";").map((check) => check.trim()).filter(Boolean));
+    return `<tr><th><span>${renderInline(requirement.id)}</span><small>${renderInline(requirement.text)}</small></th><td>${renderChips(coveringTasks.map(entryId), "chip task-chip")}</td><td><strong>${checks.length}</strong><span>observations</span></td></tr>`;
+  }).join("\n");
+
+  const changeCards = changes.map((change) => `<article class="change-card">
+    <div class="change-heading"><div><span>${renderInline(entryId(change))}</span><h3>${renderInline(entryTitle(change))}</h3></div><div class="target"><code>${renderInline(getField(change, "File"))}</code><small>${renderInline(getField(change, "Symbol"))}</small></div></div>
+    <div class="delta-lane">
+      <div class="delta before"><span>Verified before</span><p>${renderInline(getField(change, "Before"))}</p></div>
+      <div class="delta-arrow" aria-hidden="true">&rarr;</div>
+      <div class="delta after"><span>Proposed after</span><p>${renderInline(getField(change, "Proposed after"))}</p></div>
+    </div>
+    <p class="reason"><strong>Why</strong>${renderInline(getField(change, "Reason"))}</p>
+  </article>`).join("\n");
+
+  const taskCards = tasks.map((task, index) => `<article class="task-card">
+    <div class="task-index">${String(index + 1).padStart(2, "0")}</div>
+    <div class="task-body">
+      <div class="task-title"><div><span>${renderInline(entryId(task))}</span><h3>${renderInline(entryTitle(task))}</h3></div><span class="commit-badge">${renderInline(getField(task, "Commit group"))}</span></div>
+      <p class="task-change">${renderInline(getField(task, "Change"))}</p>
+      <div class="task-meta"><div><small>Requirements</small>${renderChips(splitList(getField(task, "Requirements")))}</div><div><small>Depends on</small>${renderChips(splitList(getField(task, "Depends on")))}</div></div>
+      <div class="file-strip"><small>Files</small>${renderChips(splitList(getField(task, "Files")), "chip file-chip")}</div>
+      <div class="verification-box"><small>Observable verification</small>${renderChecks(getField(task, "Verification"))}</div>
+      <div class="evidence-line"><small>Evidence</small>${renderChips(splitList(getField(task, "Evidence")))}</div>
+    </div>
+  </article>`).join("\n");
+
+  const fileRows = files.map((file) => {
+    const relatedTasks = tasks.filter((task) => splitList(getField(task, "Files")).includes(file));
+    const relatedChanges = changes.filter((change) => getField(change, "File") === file);
+    const groups = [...new Set(relatedTasks.map((task) => getField(task, "Commit group")))];
+    return `<tr><th><code>${renderInline(file)}</code></th><td>${renderChips(relatedChanges.map(entryId))}</td><td>${renderChips(relatedTasks.map(entryId), "chip task-chip")}</td><td>${renderChips(groups)}</td></tr>`;
+  }).join("\n");
+
+  const riskCards = risks.map((risk) => `<article class="risk-card">
+    <div class="risk-title"><span>${renderInline(entryId(risk))}</span><h3>${renderInline(entryTitle(risk))}</h3></div>
+    <dl><dt>Impact</dt><dd>${renderInline(getField(risk, "Impact"))}</dd><dt>Mitigation</dt><dd>${renderInline(getField(risk, "Mitigation"))}</dd><dt>Possible solution</dt><dd>${renderInline(getField(risk, "Possible solution"))}</dd><dt>Evidence</dt><dd>${renderChips(splitList(getField(risk, "Evidence")))}</dd></dl>
+  </article>`).join("\n");
+
+  const commitCards = commits.map((commit, index) => `<article class="commit-card">
+    <span class="commit-order">${index + 1}</span><div><p>${renderInline(entryId(commit))}</p><h3><code>${renderInline(getField(commit, "Message"))}</code></h3>${renderChips(splitList(getField(commit, "Files")), "chip file-chip")}<small>Depends on: ${renderInline(getField(commit, "Depends on"))}</small></div>
+  </article>`).join("\n");
+
+  const manualCards = manualChecks.entries.map((check) => `<article class="manual-card">
+    <div><span>${renderInline(entryId(check))}</span><strong>${renderInline(entryTitle(check))}</strong><em>${renderInline(getField(check, "Status"))}</em></div>
+    <p>${renderInline(getField(check, "Instructions"))}</p><small>Expected: ${renderInline(getField(check, "Expected"))}</small>
+  </article>`).join("\n");
+
+  return `<header class="plan-hero">
+    <div class="hero-inner">
+      <div class="eyebrow">Phasecraft plan / execution cockpit</div>
+      <h1>${escapeHtml(document.title?.text ?? "Phasecraft plan")}</h1>
+      <div class="hero-copy">${renderContent(goal.content)}</div>
+      <div class="metric-row">
+        ${metric("tasks", String(tasks.length), "ordered for execution")}
+        ${metric("changes", String(changes.length), "before / after deltas")}
+        ${metric("files", String(files.length), "approved impact surface")}
+        ${metric("risks", String(risks.length), "with mitigations")}
+      </div>
+    </div>
+  </header>
+  <main class="plan-main" data-view="execution-cockpit">
+    <section class="plan-section brief-section">
+      <div class="section-heading"><span>00</span><div><p>Grounding</p><h2>Inputs and constraints</h2></div></div>
+      <div class="brief-grid"><div><h3>Evidence inputs</h3>${renderContent(inputs.content)}</div><div><h3>Requirements</h3>${requirements.map((requirement) => `<p class="brief-requirement"><span>${renderInline(requirement.id)}</span>${renderInline(requirement.text)}</p>`).join("")}</div></div>
+    </section>
+    <section class="plan-section">
+      <div class="section-heading"><span>01</span><div><p>Behavior delta</p><h2>Change blueprint</h2></div></div>
+      <div class="change-stack">${changeCards}</div>
+    </section>
+    <section class="plan-section">
+      <div class="section-heading"><span>02</span><div><p>Coverage gate</p><h2>Requirement coverage</h2></div></div>
+      <div class="table-shell"><table class="coverage-table"><thead><tr><th>Requirement</th><th>Tasks</th><th>Checks</th></tr></thead><tbody>${coverageRows}</tbody></table></div>
+    </section>
+    <section class="plan-section">
+      <div class="section-heading"><span>03</span><div><p>Dependency-aware sequence</p><h2>Execution flow</h2></div></div>
+      ${taskGraph || '<p class="single-note">Single task plan. A dependency diagram will appear when multiple tasks or dependencies exist.</p>'}
+      <div class="task-stack">${taskCards}</div>
+    </section>
+    <section class="plan-section">
+      <div class="section-heading"><span>04</span><div><p>Blast radius</p><h2>File impact map</h2></div></div>
+      <div class="table-shell"><table class="file-table"><thead><tr><th>File</th><th>Changes</th><th>Tasks</th><th>Commit</th></tr></thead><tbody>${fileRows}</tbody></table></div>
+    </section>
+    <section class="plan-section split-section">
+      <div><div class="section-heading compact"><span>05</span><div><p>Controls</p><h2>Risk register</h2></div></div><div class="risk-stack">${riskCards}</div></div>
+      <div><div class="section-heading compact"><span>06</span><div><p>Delivery shape</p><h2>Commit groups</h2></div></div><div class="commit-stack">${commitCards}</div></div>
+    </section>
+    <section class="plan-section">
+      <div class="section-heading"><span>07</span><div><p>Human evidence</p><h2>Manual checks</h2></div></div>
+      ${sectionIsNone(manualChecks) ? '<p class="empty-state resolved">No manual checks required for this phase.</p>' : `<div class="manual-grid">${manualCards}</div>`}
+    </section>
+  </main>`;
+}
+
+const SHARED_STYLES = `
+:root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 * { box-sizing: border-box; }
-body { margin: 0; color: var(--ink); background: var(--paper); }
-header { padding: 3.5rem max(1.25rem, calc((100vw - 1120px) / 2)); background: var(--ink); color: var(--paper); }
-.eyebrow { color: #9ec8b8; font-size: .75rem; letter-spacing: .16em; text-transform: uppercase; }
-h1 { max-width: 900px; margin: .6rem 0 1rem; font-family: Georgia, serif; font-size: clamp(2.2rem, 6vw, 4.8rem); line-height: .98; font-weight: 500; }
-.meta { display: flex; flex-wrap: wrap; gap: .65rem; color: #c8d0cc; font-size: .78rem; }
-.meta span { border: 1px solid #4f5b56; border-radius: 999px; padding: .35rem .65rem; }
-main { width: min(1120px, calc(100% - 2rem)); margin: 0 auto; padding: 2.5rem 0 5rem; }
-section { padding: 1.8rem 0 2.4rem; border-bottom: 1px solid var(--line); }
-h2 { margin: 0 0 1.2rem; font-family: Georgia, serif; font-size: clamp(1.7rem, 3vw, 2.5rem); font-weight: 500; }
-.section-copy { max-width: 850px; line-height: 1.65; }
-.card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 1rem; }
-.card { position: relative; overflow: hidden; padding: 1.1rem; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); box-shadow: 0 8px 24px rgb(38 36 30 / 5%); }
-.card::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--green); }
-.card-r::before { background: var(--orange); }
-.card-ch::before, .card-p::before { background: var(--blue); }
-.card-c::before, .card-m::before { background: var(--violet); }
-.card h3 { margin: 0 0 .9rem; padding-left: .35rem; font-size: 1rem; }
-dl { display: grid; grid-template-columns: minmax(90px, .35fr) 1fr; gap: .55rem .75rem; margin: 0; font-size: .84rem; line-height: 1.45; }
-dt { color: var(--muted); text-transform: capitalize; }
-dd { margin: 0; overflow-wrap: anywhere; }
-code { padding: .1em .3em; border-radius: 4px; background: #e8e3d6; color: #7b341a; }
-footer { width: min(1120px, calc(100% - 2rem)); margin: 0 auto; padding: 1.2rem 0 2.5rem; color: var(--muted); font-size: .75rem; overflow-wrap: anywhere; }
-@media (max-width: 620px) {
-  header { padding-top: 2.4rem; padding-bottom: 2.4rem; }
-  main { padding-top: 1.3rem; }
-  dl { grid-template-columns: 1fr; gap: .15rem; }
-  dd { margin-bottom: .6rem; }
+body { margin: 0; min-width: 320px; }
+h1, h2, h3, p { margin-top: 0; }
+code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; overflow-wrap: anywhere; }
+.hero-inner, main, footer { width: min(1180px, calc(100% - 2rem)); margin-inline: auto; }
+header { overflow: hidden; }
+.hero-inner { padding-block: clamp(3rem, 8vw, 6.5rem) clamp(2.5rem, 6vw, 4.5rem); }
+.eyebrow { margin-bottom: 1.25rem; font: 700 .72rem/1.2 "SFMono-Regular", Consolas, monospace; letter-spacing: .16em; text-transform: uppercase; }
+h1 { max-width: 980px; margin-bottom: 1.25rem; font-size: clamp(2.45rem, 7vw, 5.8rem); line-height: .96; letter-spacing: -.055em; }
+.hero-copy { max-width: 800px; font-size: clamp(1rem, 2vw, 1.28rem); line-height: 1.65; }
+.hero-copy p:last-child { margin-bottom: 0; }
+.metric-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin-top: clamp(2rem, 5vw, 4rem); border-radius: 16px; overflow: hidden; }
+.metric { display: flex; min-height: 116px; flex-direction: column; justify-content: flex-end; padding: 1.15rem; }
+.metric strong { font-size: clamp(1.8rem, 4vw, 3rem); line-height: 1; }
+.metric span { margin-top: .45rem; font-size: .72rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.metric small { margin-top: .45rem; opacity: .68; }
+main { padding-block: 2rem 5rem; }
+section { scroll-margin-top: 1rem; }
+.section-heading { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.5rem; }
+.section-heading > span { display: grid; width: 2.5rem; height: 2.5rem; place-items: center; border-radius: 999px; font: 800 .7rem/1 "SFMono-Regular", Consolas, monospace; }
+.section-heading p { margin-bottom: .2rem; font-size: .68rem; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+.section-heading h2 { margin: 0; font-size: clamp(1.55rem, 3vw, 2.4rem); letter-spacing: -.035em; }
+.section-heading.compact { margin-bottom: 1rem; }
+.chip-list { display: inline-flex; flex-wrap: wrap; gap: .35rem; }
+.chip { display: inline-flex; align-items: center; padding: .27rem .5rem; border: 1px solid currentColor; border-radius: 999px; font: 700 .68rem/1.2 "SFMono-Regular", Consolas, monospace; opacity: .82; }
+.identity { display: inline-flex; padding: .12em .34em; border-radius: .35em; font: 750 .86em/1.3 "SFMono-Regular", Consolas, monospace; white-space: nowrap; }
+.identity-e, .identity-d { background: #dbeafe; color: #1e40af; }
+.identity-p, .identity-ch { background: #ede9fe; color: #6d28d9; }
+.identity-u, .identity-r { background: #ffedd5; color: #9a3412; }
+.identity-req, .identity-t, .identity-c, .identity-m { background: #e2e8f0; color: #334155; }
+.muted { opacity: .6; }
+.diagram-shell { overflow: hidden; border: 1px solid; border-radius: 18px; }
+.diagram-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .9rem 1.1rem; border-bottom: 1px solid; }
+.diagram-heading span { font-weight: 800; }
+.diagram-heading small { opacity: .62; }
+.diagram-scroll { overflow-x: auto; }
+.dependency-graph { display: block; width: 100%; min-width: 680px; height: auto; }
+.graph-edge { fill: none; stroke-width: 2.2; }
+.graph-node rect { stroke-width: 1.4; }
+.graph-id { font: 800 12px "SFMono-Regular", Consolas, monospace; }
+.graph-title { font: 750 13px Inter, ui-sans-serif, system-ui, sans-serif; }
+.graph-subtitle { font: 500 10px Inter, ui-sans-serif, system-ui, sans-serif; opacity: .68; }
+.split-section { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(280px, .8fr); gap: 2rem; }
+.single-note, .empty-state { padding: 1.2rem; border: 1px dashed; border-radius: 14px; line-height: 1.55; }
+footer { padding-block: 1.25rem 2.5rem; font: 500 .72rem/1.5 "SFMono-Regular", Consolas, monospace; overflow-wrap: anywhere; opacity: .68; }
+@media (max-width: 800px) {
+  .metric-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .split-section { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .hero-inner, main, footer { width: min(100% - 1.25rem, 1180px); }
+  .metric-row { grid-template-columns: 1fr 1fr; }
+  .metric { min-height: 96px; padding: .85rem; }
+  .diagram-heading { align-items: flex-start; flex-direction: column; }
 }
 @media print {
-  body { background: white; }
-  header { background: white; color: black; padding-top: 1rem; }
-  .eyebrow, .meta { color: #444; }
-  .card { break-inside: avoid; box-shadow: none; }
+  body { background: white !important; color: black !important; }
+  header { background: white !important; color: black !important; }
+  .metric, article, .diagram-shell, .table-shell { break-inside: avoid; box-shadow: none !important; }
+  main { width: 100%; }
 }
 `.trim();
+
+const ROADMAP_STYLES = `
+body.roadmap { color: #dbeafe; background-color: #07111f; background-image: linear-gradient(rgba(96,165,250,.055) 1px, transparent 1px), linear-gradient(90deg, rgba(96,165,250,.055) 1px, transparent 1px); background-size: 32px 32px; }
+.roadmap-hero { color: #eff6ff; background: radial-gradient(circle at 82% 15%, rgba(34,211,238,.2), transparent 34%), linear-gradient(135deg, #0f1b35, #07111f 70%); border-bottom: 1px solid #203452; }
+.roadmap-hero .eyebrow { color: #67e8f9; }
+.roadmap-hero .hero-copy { color: #a9bed8; }
+.roadmap-hero .metric-row { border: 1px solid #28415f; background: #28415f; }
+.roadmap-hero .metric { background: rgba(7,17,31,.86); }
+.roadmap-hero .metric strong { color: #67e8f9; }
+.roadmap-section { padding-block: 2.4rem; border-bottom: 1px solid #203452; }
+.roadmap-section .section-heading > span { color: #07111f; background: #67e8f9; }
+.roadmap-section .section-heading p { color: #67e8f9; }
+.roadmap .diagram-shell { border-color: #28415f; background: rgba(10,28,48,.78); }
+.roadmap .diagram-heading { border-color: #28415f; color: #bfdbfe; }
+.roadmap .graph-edge { stroke: #22d3ee; }
+.roadmap marker path { fill: #22d3ee; }
+.roadmap .graph-node rect { fill: #0e2239; stroke: #3b82f6; }
+.roadmap .graph-id { fill: #67e8f9; }
+.roadmap .graph-title { fill: #eff6ff; }
+.roadmap .graph-subtitle { fill: #a9bed8; }
+.phase-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 1rem; }
+.phase-card { position: relative; min-height: 330px; padding: 1.2rem; overflow: hidden; border: 1px solid #28415f; border-radius: 16px; background: linear-gradient(145deg, rgba(16,40,66,.92), rgba(8,23,40,.95)); box-shadow: 0 24px 60px rgba(0,0,0,.18); }
+.phase-card::after { position: absolute; inset: auto -20px -45px auto; width: 130px; height: 130px; border: 1px solid rgba(103,232,249,.16); border-radius: 999px; content: ""; }
+.phase-card-top { display: flex; align-items: center; justify-content: space-between; }
+.phase-number { color: #35587a; font: 800 2.2rem/1 "SFMono-Regular", Consolas, monospace; }
+.status { padding: .32rem .55rem; border: 1px solid #3b82f6; border-radius: 999px; color: #bfdbfe; font-size: .68rem; font-weight: 800; text-transform: uppercase; }
+.status-status-completed, .status-completed, .status-done { color: #a7f3d0; border-color: #10b981; }
+.status-status-next, .status-next, .status-active { color: #fde68a; border-color: #f59e0b; }
+.phase-id { margin: 1.35rem 0 .35rem; color: #67e8f9; font: 750 .75rem/1 "SFMono-Regular", Consolas, monospace; }
+.phase-card h3 { margin-bottom: .75rem; color: #f8fafc; font-size: 1.25rem; }
+.phase-goal { min-height: 4.5rem; color: #a9bed8; line-height: 1.55; }
+.phase-card dl { display: grid; grid-template-columns: 88px 1fr; gap: .7rem; margin: 1.1rem 0 0; font-size: .78rem; }
+.phase-card dt { color: #6f8cab; }
+.phase-card dd { margin: 0; color: #c9d8e9; line-height: 1.45; }
+.requirement-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); gap: .8rem; }
+.requirement-card { padding: 1rem; border-left: 3px solid #22d3ee; border-radius: 0 12px 12px 0; background: rgba(16,40,66,.72); }
+.requirement-card > span { color: #67e8f9; }
+.requirement-card p { margin: .65rem 0; color: #dbeafe; line-height: 1.5; }
+.requirement-card small { color: #7894b2; }
+.risk-stack { display: grid; gap: .8rem; }
+.roadmap-risk { padding: 1rem; border: 1px solid #513f3f; border-radius: 14px; background: rgba(48,25,30,.5); }
+.roadmap-risk > div { display: flex; align-items: baseline; gap: .55rem; }
+.roadmap-risk h3 { margin: 0; font-size: 1rem; }
+.roadmap-risk > div > span { color: #fdba74; }
+.roadmap-risk p { display: grid; grid-template-columns: 110px 1fr; gap: .6rem; margin: .8rem 0 0; color: #d7c0c2; font-size: .8rem; line-height: 1.45; }
+.roadmap-risk strong { color: #fb923c; font-size: .68rem; letter-spacing: .08em; text-transform: uppercase; }
+.unknown-panel { padding: 1.2rem; border: 1px solid #5b4b29; border-radius: 14px; color: #fde68a; background: rgba(66,48,13,.4); line-height: 1.55; }
+.roadmap .empty-state { border-color: #31506e; color: #8ca8c4; }
+.roadmap .empty-state.resolved { color: #a7f3d0; border-color: #166534; }
+.roadmap footer { color: #7894b2; }
+`.trim();
+
+const PLAN_STYLES = `
+body.plan { color: #1c1917; background: #f4efe5; }
+.plan-hero { color: #fafaf9; background: radial-gradient(circle at 78% 14%, rgba(167,139,250,.32), transparent 34%), linear-gradient(135deg, #241b3d, #151322 72%); }
+.plan-hero .eyebrow { color: #c4b5fd; }
+.plan-hero .hero-copy { color: #d6d3e4; }
+.plan-hero .metric-row { border: 1px solid #51456c; background: #51456c; }
+.plan-hero .metric { background: rgba(21,19,34,.88); }
+.plan-hero .metric strong { color: #ddd6fe; }
+.plan-section { padding-block: 2.4rem; border-bottom: 1px solid #d8cebd; }
+.plan-section .section-heading > span { color: #fff; background: #6d28d9; }
+.plan-section .section-heading p { color: #7c3aed; }
+.brief-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.brief-grid > div { padding: 1.15rem; border: 1px solid #d8cebd; border-radius: 14px; background: #fffdf8; }
+.brief-grid h3 { margin-bottom: .9rem; color: #6d28d9; font-size: .75rem; letter-spacing: .12em; text-transform: uppercase; }
+.brief-grid ul { padding-left: 1.1rem; }
+.brief-grid li, .brief-grid p { line-height: 1.55; }
+.brief-requirement { display: grid; grid-template-columns: auto 1fr; gap: .55rem; }
+.change-stack, .task-stack, .risk-stack, .commit-stack { display: grid; gap: 1rem; }
+.change-card { padding: 1.2rem; border: 1px solid #cfc3b2; border-radius: 16px; background: #fffdf8; box-shadow: 0 12px 36px rgba(66,48,28,.06); }
+.change-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.change-heading > div:first-child > span { color: #7c3aed; }
+.change-heading h3 { margin: .25rem 0 0; font-size: 1.15rem; }
+.target { display: flex; align-items: flex-end; flex-direction: column; gap: .35rem; text-align: right; }
+.target code { padding: .35rem .5rem; border-radius: 6px; color: #4338ca; background: #eef2ff; }
+.target small { color: #78716c; }
+.delta-lane { display: grid; grid-template-columns: 1fr 36px 1fr; align-items: stretch; gap: .65rem; margin-top: 1rem; }
+.delta { padding: 1rem; border-radius: 12px; }
+.delta span { display: block; margin-bottom: .55rem; font-size: .68rem; font-weight: 850; letter-spacing: .1em; text-transform: uppercase; }
+.delta p { margin: 0; line-height: 1.55; }
+.delta.before { border: 1px solid #d6d3d1; background: #f5f5f4; }
+.delta.before span { color: #57534e; }
+.delta.after { border: 1px solid #c4b5fd; background: #f5f3ff; }
+.delta.after span { color: #6d28d9; }
+.delta-arrow { display: grid; place-items: center; color: #7c3aed; font-size: 1.5rem; }
+.reason { display: grid; grid-template-columns: 42px 1fr; gap: .6rem; margin: 1rem 0 0; color: #57534e; line-height: 1.5; }
+.reason strong { color: #7c3aed; font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; }
+.table-shell { overflow-x: auto; border: 1px solid #cfc3b2; border-radius: 14px; background: #fffdf8; }
+table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+th, td { padding: .85rem; border-bottom: 1px solid #e7ded0; text-align: left; vertical-align: top; }
+thead th { color: #78716c; background: #f8f3ea; font-size: .67rem; letter-spacing: .1em; text-transform: uppercase; }
+tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
+.coverage-table tbody th { min-width: 280px; }
+.coverage-table tbody th span, .coverage-table tbody th small { display: block; }
+.coverage-table tbody th small { margin-top: .4rem; color: #57534e; font-weight: 500; line-height: 1.45; }
+.coverage-table td:last-child strong, .coverage-table td:last-child span { display: block; }
+.coverage-table td:last-child strong { color: #6d28d9; font-size: 1.2rem; }
+.coverage-table td:last-child span { color: #78716c; font-size: .7rem; }
+.plan .diagram-shell { margin-bottom: 1rem; border-color: #cfc3b2; background: #fffdf8; }
+.plan .diagram-heading { border-color: #e7ded0; }
+.plan .graph-edge { stroke: #7c3aed; }
+.plan marker path { fill: #7c3aed; }
+.plan .graph-node rect { fill: #f5f3ff; stroke: #8b5cf6; }
+.plan .graph-id { fill: #6d28d9; }
+.plan .graph-title { fill: #292524; }
+.plan .graph-subtitle { fill: #78716c; }
+.task-card { display: grid; grid-template-columns: 64px 1fr; overflow: hidden; border: 1px solid #cfc3b2; border-radius: 16px; background: #fffdf8; }
+.task-index { padding: 1.15rem .75rem; color: #a78bfa; background: #241b3d; font: 800 1.4rem/1 "SFMono-Regular", Consolas, monospace; }
+.task-body { padding: 1.15rem; }
+.task-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.task-title > div > span { color: #7c3aed; }
+.task-title h3 { margin: .25rem 0 0; font-size: 1.15rem; }
+.commit-badge { padding: .35rem .5rem; border-radius: 6px; color: #fff; background: #6d28d9; font: 750 .68rem/1 "SFMono-Regular", Consolas, monospace; }
+.task-change { margin: 1rem 0; color: #44403c; line-height: 1.55; }
+.task-meta { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; }
+.task-meta > div, .file-strip, .verification-box, .evidence-line { padding: .75rem; border-radius: 10px; background: #f8f3ea; }
+.task-meta small, .file-strip > small, .verification-box > small, .evidence-line > small { display: block; margin-bottom: .5rem; color: #78716c; font-size: .65rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.file-strip, .verification-box, .evidence-line { margin-top: .75rem; }
+.file-chip { color: #4338ca; background: #eef2ff; }
+.task-chip { color: #6d28d9; background: #f5f3ff; }
+.check-list { display: grid; gap: .45rem; margin: 0; padding: 0; list-style: none; }
+.check-list li { position: relative; padding-left: 1.35rem; line-height: 1.45; }
+.check-list li::before { position: absolute; left: 0; color: #16a34a; content: "\\2713"; font-weight: 900; }
+.file-table tbody th { min-width: 280px; }
+.risk-card { padding: 1rem; border: 1px solid #fed7aa; border-radius: 14px; background: #fff7ed; }
+.risk-title { display: flex; align-items: baseline; gap: .55rem; }
+.risk-title > span { color: #c2410c; }
+.risk-title h3 { margin: 0; font-size: 1rem; }
+.risk-card dl { display: grid; grid-template-columns: 110px 1fr; gap: .65rem; margin: 1rem 0 0; font-size: .8rem; }
+.risk-card dt { color: #c2410c; font-weight: 800; }
+.risk-card dd { margin: 0; line-height: 1.45; }
+.commit-card { display: grid; grid-template-columns: 40px 1fr; gap: .75rem; padding: 1rem; border: 1px solid #d8cebd; border-radius: 14px; background: #fffdf8; }
+.commit-order { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 999px; color: #fff; background: #1c1917; font-weight: 850; }
+.commit-card p { margin: 0; color: #7c3aed; }
+.commit-card h3 { margin: .35rem 0 .7rem; font-size: .88rem; }
+.commit-card small { display: block; margin-top: .7rem; color: #78716c; }
+.manual-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: .8rem; }
+.manual-card { padding: 1rem; border: 1px solid #bae6fd; border-radius: 14px; background: #f0f9ff; }
+.manual-card > div { display: flex; align-items: center; gap: .55rem; }
+.manual-card > div > span { color: #0369a1; }
+.manual-card em { margin-left: auto; color: #0369a1; font-size: .7rem; }
+.manual-card p { margin: .8rem 0; line-height: 1.5; }
+.manual-card small { color: #57534e; }
+.plan .single-note, .plan .empty-state { color: #78716c; border-color: #cfc3b2; background: #fffdf8; }
+.plan .empty-state.resolved { color: #166534; border-color: #86efac; background: #f0fdf4; }
+.plan footer { color: #78716c; }
+@media (max-width: 720px) {
+  .brief-grid, .task-meta { grid-template-columns: 1fr; }
+  .delta-lane { grid-template-columns: 1fr; }
+  .delta-arrow { transform: rotate(90deg); }
+  .change-heading, .task-title { align-items: flex-start; flex-direction: column; }
+  .target { align-items: flex-start; text-align: left; }
+  .task-card { grid-template-columns: 46px 1fr; }
+}
+`.trim();
+
+function stylesFor(kind) {
+  return `${SHARED_STYLES}\n${kind === "roadmap" ? ROADMAP_STYLES : PLAN_STYLES}`;
+}
 
 export function renderArtifact(kind, source, options = {}) {
   const validation = kind === "plan"
@@ -147,7 +631,8 @@ export function renderArtifact(kind, source, options = {}) {
     throw error;
   }
 
-  const title = validation.document.title?.text ?? "Phasecraft artifact";
+  const title = validation.document.title?.text ?? `Phasecraft ${kind}`;
+  const body = kind === "roadmap" ? renderRoadmap(validation) : renderPlan(validation);
   const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -155,19 +640,13 @@ export function renderArtifact(kind, source, options = {}) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="phasecraft-source-sha256" content="${validation.sourceHash}">
 <meta name="phasecraft-schema-version" content="${ARTIFACT_SCHEMA_VERSION}">
+<meta name="phasecraft-view" content="${kind === "roadmap" ? "roadmap-atlas" : "execution-cockpit"}">
 <title>${escapeHtml(title)}</title>
-<style>${STYLES}</style>
+<style>${stylesFor(kind)}</style>
 </head>
-<body>
-<header>
-<div class="eyebrow">Phasecraft ${escapeHtml(kind)} / schema v${ARTIFACT_SCHEMA_VERSION}</div>
-<h1>${escapeHtml(title)}</h1>
-<div class="meta"><span>source ${validation.sourceHash}</span><span>${validation.references.length} evidence references</span><span>${validation.warnings.length} audit warnings</span></div>
-</header>
-<main>
-${renderDocument(validation.document)}
-</main>
-<footer>Generated deterministically from authoritative Markdown. Source SHA-256: ${validation.sourceHash}</footer>
+<body class="${kind}">
+${body}
+<footer>Authoritative source: Markdown / schema v${ARTIFACT_SCHEMA_VERSION} / SHA-256 ${validation.sourceHash}</footer>
 </body>
 </html>
 `;

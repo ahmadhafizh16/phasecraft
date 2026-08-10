@@ -40,6 +40,16 @@ Always pass arguments as separate shell arguments. Do not construct arbitrary sh
 
 Restricted `PLAN.md` sections are `Goal`, `Inputs`, `Requirements`, `Technical Design`, `Tasks`, `Risk Controls`, `Commit Groups`, and `Manual Checks`. Technical entries are `CH-*`; tasks are `T-*`; risks are `R-*`; groups are `C-*`; manual checks are `M-*`. Every task names its `REQ-*` coverage, and every requirement needs at least two observable verification checks. Execution-critical `U-*` references block plan approval.
 
+## HTML Visualization Contract
+
+Markdown remains authoritative and agents never hand-edit HTML. Render `roadmap` and `plan` as different information products:
+
+- Roadmap view: strategic phase atlas with status, dependencies, requirement ownership, exit evidence, risks, and unknowns.
+- Plan view: execution cockpit with before/proposed-after change lanes, requirement coverage, ordered tasks, file impact, risk controls, manual checks, and commit groups.
+- Add a native dependency diagram when multiple phases/tasks or explicit dependencies make sequence hard to understand. Omit diagrams for a single unrelated item or when they add no information.
+- Diagram labels come only from validated structured fields. Do not invent nodes, dependencies, or progress.
+- Keep labels concise; put detailed reasoning in the accompanying cards and tables.
+
 ## Deviations
 
 Minor evidence-backed implementation details may be logged without replanning. New files, scope, architecture, dependencies, public APIs, data schemas, security behavior, or requirement changes are material: stop, archive the active plan, return to `plan_draft`, revise, render, and audit again.
