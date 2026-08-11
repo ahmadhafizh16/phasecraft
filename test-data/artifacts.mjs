@@ -46,11 +46,68 @@ Make timeout handling bounded and observable. D-001
 
 ## Technical Design
 ### CH-001: Validate timeout configuration
+- Change type: code
 - File: src/session.mjs
 - Symbol: createSession
 - Before: E-001 accepts any numeric timeout.
 - Proposed after: PROPOSED P-001 validates the configured bounds.
 - Reason: Prevent invalid lifecycle behavior while preserving D-001.
+- Database changes: none
+- API changes: none
+- Flow impact: F-001 inserts bounded validation before session construction and rejects invalid input before state is created.
+
+#### Before code
+\`\`\`js
+export function createSession(timeout) {
+  return { timeout };
+}
+\`\`\`
+
+#### Proposed code
+\`\`\`js
+export function createSession(timeout) {
+  assertTimeoutInRange(timeout);
+  return { timeout };
+}
+\`\`\`
+
+#### Expected result
+\`\`\`json
+{
+  "timeout": 30,
+  "created": true
+}
+\`\`\`
+
+## Application Flows
+### F-001: Session creation timeout validation
+- Surface: Internal session creation
+- Entry point: src/session.mjs:createSession
+- Phase: P-01
+- Before: E-001 constructs a session directly from the supplied timeout.
+- After: PROPOSED P-001 validates the timeout before session construction and rejects unsupported values.
+- Evidence: E-001, D-001, P-001
+
+#### Diagram
+\`\`\`mermaid
+flowchart LR
+  subgraph BEFORE["BEFORE · direct construction"]
+    direction TB
+    B1["Caller supplies timeout"] --> B2["createSession(timeout)"] --> B3["Return session"]
+  end
+  subgraph AFTER["AFTER · bounded construction"]
+    direction TB
+    A1["Caller supplies timeout"] --> A2["createSession(timeout)"] --> A3{"Within supported bounds?"}
+    A3 -- "No" --> A4["Reject before state creation"]
+    A3 -- "Yes" --> A5["Return session"]
+  end
+\`\`\`
+
+#### Change points
+\`\`\`changes
+A2 | P-01 | src/session.mjs | createSession | Insert the bounds assertion before constructing session state.
+A3 | P-01 | src/session.mjs | createSession | Branch invalid input to rejection and valid input to the existing constructor.
+\`\`\`
 
 ## Tasks
 ### T-001: Add bounded validation

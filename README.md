@@ -9,7 +9,7 @@
   <p>
     <img alt="Version 0.1.0" src="https://img.shields.io/badge/version-0.1.0-6366f1?style=flat-square">
     <img alt="Node.js 20 or newer" src="https://img.shields.io/badge/Node.js-%E2%89%A520-339933?style=flat-square&logo=nodedotjs&logoColor=white">
-    <img alt="Zero dependencies" src="https://img.shields.io/badge/dependencies-zero-22d3ee?style=flat-square">
+    <img alt="Mermaid diagrams" src="https://img.shields.io/badge/diagrams-Mermaid-22d3ee?style=flat-square">
     <img alt="OpenCode workflow" src="https://img.shields.io/badge/OpenCode-workflow-111827?style=flat-square">
     <img alt="Tests passing" src="https://img.shields.io/badge/tests-passing-16a34a?style=flat-square">
   </p>
@@ -37,7 +37,7 @@ AI-assisted implementation becomes risky when context, assumptions, code changes
 | Approval means “roughly this” | Ship approval is bound to exact files, diffs, checks, and messages |
 | Agents push work immediately | Phasecraft creates local commits only and never pushes |
 
-Phasecraft is intentionally local, inspectable, and dependency-free. The semantic work lives in OpenCode agents; deterministic state, Git, validation, and rendering operations live in plain Node.js modules.
+Phasecraft is intentionally local and inspectable. The semantic work lives in OpenCode agents; deterministic state, Git, validation, and rendering operations live in plain Node.js modules. Generated application-flow diagrams use a pinned Mermaid browser renderer.
 
 <a id="quick-start"></a>
 
@@ -174,6 +174,7 @@ Reviewable artifacts and private runtime state remain separated:
 │   └── PROJECT.md
 ├── work/<confirmed-template-path>/
 │   ├── CONTEXT.md
+│   ├── handoffs/<agent>/H-001.md
 │   ├── research/
 │   │   ├── RESEARCH.md
 │   │   └── EVIDENCE.json
@@ -201,7 +202,9 @@ Reviewable artifacts and private runtime state remain separated:
 | `local` | Adds `/.phasecraft/` to the repository-local `.git/info/exclude`. |
 | `reviewable` | Excludes only `/.phasecraft/.local/`; decisions, evidence, plans, and verification can be reviewed or committed manually. |
 
-Markdown is authoritative. `roadmap.html` is a strategic phase atlas, while `plan.html` is an execution cockpit for change deltas, requirement coverage, task flow, file impact, risks, checks, and commits. Both are escaped, deterministic, offline derivatives bound to their Markdown SHA-256; dependency diagrams appear only when they add structural information.
+Markdown is authoritative. `roadmap.html` is a strategic phase atlas, while `plan.html` is an implementation review cockpit for syntax-highlighted before/proposed code and concrete expected results, Mermaid BEFORE/AFTER application-flow comparisons, surgical node-to-file/symbol mappings, database/API impact, migration and rollback detail, requirement coverage, task flow, file impact, risks, row-based manual checks, and commits. Evidence identities link to reference cards with their claim, provenance, and status. Both views are escaped and bound to their Markdown SHA-256. Plans with application flows load pinned Mermaid `11.4.1` from jsDelivr and preserve readable diagram source as fallback.
+
+Every Phasecraft agent invocation also writes an immutable, atomically sequenced `handoffs/<agent>/H-NNN.md`. Handoffs preserve exact navigation and resume context across repeated agent rounds, but never replace evidence, plans, state, execution records, or verification artifacts.
 
 <a id="safety-model"></a>
 
@@ -238,6 +241,7 @@ Models are inherited from the target project's OpenCode configuration. Phasecraf
 | State | `runtime/state.mjs` | Safe templates, registry, revisions, locks, and legal transitions |
 | Knowledge | `runtime/knowledge.mjs` | Authority discovery, source hashing, and drift detection |
 | Artifacts | `runtime/artifacts.mjs` | Evidence, roadmap, and restricted plan validation |
+| Handoffs | `runtime/handoffs.mjs` | Validated immutable agent handoff allocation and discovery |
 | Renderer | `runtime/render.mjs` | Safe deterministic plan and roadmap HTML |
 | Git | `runtime/git.mjs` | Baselines, patches, groups, previews, and local Ship |
 | OpenCode package | `opencode/` | Nine commands, seven scoped agents, and the shared skill |
@@ -274,7 +278,7 @@ npm run check
 npm test
 ```
 
-The zero-dependency `node:test` suite uses temporary Git repositories and covers state transitions, path safety, authority drift, research consent, plan validation, hostile HTML escaping, deterministic rendering, baseline handling, recovery patches, commit-group merging, exact Ship drift detection, local commits, installer safety, and OpenCode package discovery.
+The `node:test` suite uses temporary Git repositories and covers state transitions, path safety, authority drift, research consent, plan validation, hostile HTML escaping, deterministic source generation, application-flow contracts, durable handoffs, baseline handling, recovery patches, commit-group merging, exact Ship drift detection, local commits, installer safety, and OpenCode package discovery.
 
 <a id="documentation"></a>
 

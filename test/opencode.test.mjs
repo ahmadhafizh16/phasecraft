@@ -41,6 +41,9 @@ test("OpenCode package contains nine commands with valid agent references", asyn
     assert.ok(agents.has(metadata.agent), `${file} references missing agent ${metadata.agent}`);
     assert.match(source, /\$ARGUMENTS/u);
     assert.doesNotMatch(source, /^model:/mu);
+    assert.match(source, /handoff-list --all/u);
+    assert.match(source, /handoff-write --agent phasecraft-/u);
+    assert.match(source, /never allocate `H-NNN\.md` manually/iu);
   }
 });
 
@@ -55,6 +58,9 @@ test("OpenCode package contains seven model-agnostic stage agents", async () => 
     assert.ok(metadata.description);
     assert.doesNotMatch(source, /^model:/mu);
     assert.match(source, /^\s+question:\s+allow$/mu);
+    assert.match(source, /handoff-list --all/u);
+    assert.match(source, /handoff-write --agent phasecraft-/u);
+    assert.match(source, /never allocate or overwrite `H-NNN\.md` manually/iu);
   }
 });
 
@@ -63,4 +69,36 @@ test("Phasecraft skill has discoverable OpenCode frontmatter", async () => {
   const metadata = frontmatter(source);
   assert.equal(metadata.name, "phasecraft");
   assert.match(metadata.description, /Phasecraft/u);
+});
+
+test("planning prompts require implementation-readable HTML source material", async () => {
+  const plan = await readFile(path.join(root, "opencode", "commands", "phasecraft-plan.md"), "utf8");
+  const verify = await readFile(path.join(root, "opencode", "commands", "phasecraft-verify-plan.md"), "utf8");
+  const skill = await readFile(path.join(root, "opencode", "skills", "phasecraft", "SKILL.md"), "utf8");
+  for (const pattern of [
+    /#### Before code/u,
+    /#### Proposed code/u,
+    /#### Expected result/u,
+    /## Application Flows/u,
+    /#### Diagram/u,
+    /#### Change points/u,
+    /Mermaid node \| Phase \| File \| Symbol \| Surgical change/u,
+    /subgraph BEFORE/u,
+    /subgraph AFTER/u,
+    /all regular discounts/iu,
+    /persistence.*external/iu,
+    /one full-width row/iu,
+    /syntax-highlight/iu,
+  ]) {
+    assert.match(plan, pattern);
+  }
+  assert.match(verify, /rendered Mermaid BEFORE\/AFTER/u);
+  assert.match(verify, /surgical change-point tables/iu);
+  assert.match(verify, /concrete expected-result panels/iu);
+  assert.match(verify, /row per manual check/u);
+  assert.match(skill, /Every `F-\*` declares/u);
+  assert.match(skill, /pinned Mermaid browser renderer/u);
+  assert.match(skill, /deterministic token spans/u);
+  assert.match(skill, /handoff-write --work <id>/u);
+  assert.match(skill, /Never allocate a sequence/iu);
 });

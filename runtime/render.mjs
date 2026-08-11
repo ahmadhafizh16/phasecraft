@@ -1,7 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { ARTIFACT_SCHEMA_VERSION, validatePlan, validateRoadmap } from "./artifacts.mjs";
+import {
+  ARTIFACT_SCHEMA_VERSION,
+  parseChangePoints,
+  parseEntryDetailBlocks,
+  validatePlan,
+  validateRoadmap,
+} from "./artifacts.mjs";
 
 export function escapeHtml(value) {
   return String(value)
@@ -15,7 +21,11 @@ export function escapeHtml(value) {
 function renderInline(value) {
   return escapeHtml(value)
     .replace(/`([^`]+)`/gu, "<code>$1</code>")
-    .replace(/\b(REQ|CH|T|C|M|E|D|P|U|R)-(\d{2,})\b/gu, (_, prefix, number) => (
+    .replace(/\b(E|D|P|U|R)-(\d{3,})\b/gu, (_, prefix, number) => (
+      `<a class="identity identity-${prefix.toLowerCase()}" href="#reference-${prefix}-${number}" title="Open reference ${prefix}-${number}">${prefix}-${number}</a>`
+    ))
+    .replace(/\bP-(\d{2})\b/gu, (_, number) => `<span class="identity identity-phase">P-${number}</span>`)
+    .replace(/\b(REQ|CH|F|T|C|M)-(\d{2,})\b/gu, (_, prefix, number) => (
       `<span class="identity identity-${prefix.toLowerCase()}">${prefix}-${number}</span>`
     ));
 }
@@ -88,6 +98,60 @@ function renderChips(values, className = "chip") {
 function renderChecks(value) {
   const checks = value.split(";").map((item) => item.trim()).filter(Boolean);
   return `<ul class="check-list">${checks.map((check) => `<li>${renderInline(check)}</li>`).join("")}</ul>`;
+}
+
+function syntaxPattern(language) {
+  if (["js", "javascript", "jsx", "mjs", "cjs", "ts", "typescript", "tsx"].includes(language)) {
+    return /(?<comment>\/\/[^\n]*|\/\*[\s\S]*?\*\/)|(?<string>'(?:\\[\s\S]|[^'\\])*'|"(?:\\[\s\S]|[^"\\])*"|`(?:\\[\s\S]|[^`\\])*`)|(?<number>\b(?:0[xX][\dA-Fa-f]+|\d+(?:\.\d+)?)\b)|(?<keyword>\b(?:async|await|break|case|catch|class|const|continue|default|delete|do|else|export|extends|finally|for|from|function|if|import|in|instanceof|let|new|of|return|static|switch|throw|try|typeof|var|while|yield)\b)|(?<literal>\b(?:false|null|true|undefined)\b)|(?<function>\b[A-Za-z_$][\w$]*(?=\s*\())|(?<property>\b[A-Za-z_$][\w$]*(?=\s*:))/gmu;
+  }
+  if (language === "json") {
+    return /(?<property>"(?:\\[\s\S]|[^"\\])*"(?=\s*:))|(?<string>"(?:\\[\s\S]|[^"\\])*")|(?<number>-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)|(?<literal>\b(?:false|null|true)\b)/gmu;
+  }
+  if (["sql", "pgsql", "postgres", "mysql"].includes(language)) {
+    return /(?<comment>--[^\n]*|\/\*[\s\S]*?\*\/)|(?<string>'(?:''|[^'])*')|(?<number>\b\d+(?:\.\d+)?\b)|(?<keyword>\b(?:add|alter|and|as|begin|by|column|commit|constraint|create|delete|drop|exists|from|group|having|index|insert|into|join|key|limit|not|null|on|or|order|primary|references|returning|rollback|select|set|table|transaction|unique|update|values|where)\b)|(?<literal>\b(?:false|true)\b)/gimu;
+  }
+  if (["bash", "sh", "shell", "zsh"].includes(language)) {
+    return /(?<comment>#[^\n]*)|(?<string>'[^']*'|"(?:\\.|[^"\\])*")|(?<variable>\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)|(?<number>\b\d+(?:\.\d+)?\b)|(?<keyword>\b(?:case|do|done|elif|else|esac|export|fi|for|function|if|in|local|readonly|then|while)\b)/gmu;
+  }
+  return null;
+}
+
+function highlightCode(value, language) {
+  const normalized = String(language || "text").trim().toLowerCase();
+  const pattern = syntaxPattern(normalized);
+  if (!pattern) return escapeHtml(value);
+  let cursor = 0;
+  let output = "";
+  for (const match of String(value).matchAll(pattern)) {
+    output += escapeHtml(String(value).slice(cursor, match.index));
+    const type = Object.entries(match.groups ?? {}).find(([, token]) => token !== undefined)?.[0] ?? "plain";
+    output += `<span class="syntax-${type}">${escapeHtml(match[0])}</span>`;
+    cursor = match.index + match[0].length;
+  }
+  return output + escapeHtml(String(value).slice(cursor));
+}
+
+function renderTechnicalBlock(block, label) {
+  if (!block?.text) {
+    return `<div class="missing-detail"><strong>${escapeHtml(label)}</strong><span>Not supplied in PLAN.md</span></div>`;
+  }
+  const language = block.language || "text";
+  return `<div class="code-panel"><div class="code-panel-heading"><strong>${escapeHtml(label)}</strong><span>${escapeHtml(language)}</span></div><pre><code class="language-${escapeHtml(language.toLowerCase())}">${highlightCode(block.text, language)}</code></pre></div>`;
+}
+
+function renderApplicationFlow(entry) {
+  const blocks = parseEntryDetailBlocks(entry);
+  const diagram = blocks.get("diagram");
+  const changePoints = parseChangePoints(blocks.get("change points")).points;
+  const pointRows = changePoints.map((point) => `<tr><th><code>${escapeHtml(point.node)}</code></th><td>${renderInline(point.phase)}</td><td><code>${renderInline(point.file)}</code><small>${renderInline(point.symbol)}</small></td><td>${renderInline(point.change)}</td></tr>`).join("\n");
+  return `<article class="application-flow-card" data-application-flow="${escapeHtml(entryId(entry))}">
+    <div class="application-flow-header"><div><span>${renderInline(entryId(entry))}</span><h3>${renderInline(entryTitle(entry))}</h3></div><em>${renderInline(getField(entry, "Phase"))}</em></div>
+    <div class="application-flow-meta"><div><small>Surface</small><strong>${renderInline(getField(entry, "Surface"))}</strong></div><div><small>Entry point</small><code>${renderInline(getField(entry, "Entry point"))}</code></div></div>
+    <div class="application-flow-delta"><div><small>Before</small><p>${renderInline(getField(entry, "Before"))}</p></div><div><small>After</small><p>${renderInline(getField(entry, "After"))}</p></div></div>
+    <div class="mermaid-shell"><pre class="mermaid">${escapeHtml(diagram?.text ?? "")}</pre></div>
+    <div class="change-point-shell"><div class="change-point-heading"><strong>Surgical application changes</strong><span>${changePoints.length} mapped points</span></div><div class="table-shell"><table class="change-point-table"><thead><tr><th>Flow node</th><th>Phase</th><th>File / symbol</th><th>Surgical change</th></tr></thead><tbody>${pointRows}</tbody></table></div></div>
+    <div class="application-flow-evidence"><small>Evidence</small>${renderChips(splitList(getField(entry, "Evidence")))}</div>
+  </article>`;
 }
 
 function truncate(value, length = 27) {
@@ -192,7 +256,36 @@ function metric(label, value, detail = "") {
   return `<div class="metric"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span>${detail ? `<small>${escapeHtml(detail)}</small>` : ""}</div>`;
 }
 
-function renderRoadmap(validation) {
+function renderReferenceIndex(validation, evidenceRegistry, kind) {
+  const entriesById = new Map((evidenceRegistry?.entries ?? []).map((entry) => [entry.id, entry]));
+  const references = [];
+  const seen = new Set();
+  for (const reference of validation.references) {
+    if (seen.has(reference.id)) continue;
+    seen.add(reference.id);
+    references.push({ id: reference.id, entry: entriesById.get(reference.id) ?? null });
+  }
+  if (references.length === 0) {
+    return '<p class="empty-state resolved">This artifact has no evidence or decision references.</p>';
+  }
+
+  const cards = references.map(({ id, entry }) => {
+    const type = entry?.type ?? "unresolved";
+    const source = entry?.source ?? {};
+    return `<article class="reference-card reference-${escapeHtml(type)}" id="reference-${escapeHtml(id)}">
+      <div class="reference-heading"><span>${renderInline(id)}</span><em>${escapeHtml(type)}</em></div>
+      <p>${entry ? renderInline(entry.claim) : "Reference metadata was not supplied to the renderer."}</p>
+      <dl>
+        <dt>Source</dt><dd>${entry ? `${escapeHtml(source.kind ?? "unknown")} / ${escapeHtml(source.locator ?? "unknown")}` : "unavailable"}</dd>
+        <dt>Status</dt><dd>${escapeHtml(entry?.status ?? "unresolved")}</dd>
+      </dl>
+    </article>`;
+  }).join("\n");
+
+  return `<div class="reference-intro"><p>Every identity used above resolves here to its claim, provenance, and status. Select any inline identity to jump to its reference.</p><span>${references.length} unique references</span></div><div class="reference-grid" data-reference-index="${escapeHtml(kind)}">${cards}</div>`;
+}
+
+function renderRoadmap(validation, evidenceRegistry) {
   const document = validation.document;
   const objective = getSection(document, "Objective");
   const requirements = requirementItems(getSection(document, "Requirements"));
@@ -272,15 +365,20 @@ function renderRoadmap(validation) {
         ${sectionIsNone(unknowns) ? '<p class="empty-state resolved">No unresolved roadmap unknowns.</p>' : `<div class="unknown-panel">${renderContent(unknowns.content)}</div>`}
       </div>
     </section>
+    <section class="roadmap-section reference-section">
+      <div class="section-heading"><span>06</span><div><p>Traceability</p><h2>Evidence reference atlas</h2></div></div>
+      ${renderReferenceIndex(validation, evidenceRegistry, "roadmap")}
+    </section>
   </main>`;
 }
 
-function renderPlan(validation) {
+function renderPlan(validation, evidenceRegistry) {
   const document = validation.document;
   const goal = getSection(document, "Goal");
   const inputs = getSection(document, "Inputs");
   const requirements = requirementItems(getSection(document, "Requirements"));
   const changes = getSection(document, "Technical Design").entries;
+  const applicationFlows = getSection(document, "Application Flows").entries;
   const tasks = getSection(document, "Tasks").entries;
   const risks = getSection(document, "Risk Controls").entries;
   const commits = getSection(document, "Commit Groups").entries;
@@ -299,15 +397,29 @@ function renderPlan(validation) {
     return `<tr><th><span>${renderInline(requirement.id)}</span><small>${renderInline(requirement.text)}</small></th><td>${renderChips(coveringTasks.map(entryId), "chip task-chip")}</td><td><strong>${checks.length}</strong><span>observations</span></td></tr>`;
   }).join("\n");
 
-  const changeCards = changes.map((change) => `<article class="change-card">
-    <div class="change-heading"><div><span>${renderInline(entryId(change))}</span><h3>${renderInline(entryTitle(change))}</h3></div><div class="target"><code>${renderInline(getField(change, "File"))}</code><small>${renderInline(getField(change, "Symbol"))}</small></div></div>
-    <div class="delta-lane">
-      <div class="delta before"><span>Verified before</span><p>${renderInline(getField(change, "Before"))}</p></div>
-      <div class="delta-arrow" aria-hidden="true">&rarr;</div>
-      <div class="delta after"><span>Proposed after</span><p>${renderInline(getField(change, "Proposed after"))}</p></div>
-    </div>
-    <p class="reason"><strong>Why</strong>${renderInline(getField(change, "Reason"))}</p>
-  </article>`).join("\n");
+  const changeCards = changes.map((change) => {
+    const blocks = parseEntryDetailBlocks(change);
+    const databaseChanges = getField(change, "Database changes") || "Not declared";
+    const apiChanges = getField(change, "API changes") || "Not declared";
+    const databaseDetail = databaseChanges.toLowerCase() === "none" && !blocks.get("database migration")
+      ? ""
+      : `<div class="database-detail"><div><strong>Database migration</strong><p>${renderInline(databaseChanges)}</p></div>${renderTechnicalBlock(blocks.get("database migration"), "Migration detail")}${renderTechnicalBlock(blocks.get("rollback plan"), "Rollback plan")}</div>`;
+    return `<article class="change-card">
+      <div class="change-heading"><div><span>${renderInline(entryId(change))}</span><h3>${renderInline(entryTitle(change))}</h3><em>${escapeHtml(getField(change, "Change type") || "type not declared")}</em></div><div class="target"><code>${renderInline(getField(change, "File"))}</code><small>${renderInline(getField(change, "Symbol"))}</small></div></div>
+      <div class="delta-lane">
+        <div class="delta before"><span>Verified before</span><p>${renderInline(getField(change, "Before"))}</p></div>
+        <div class="delta-arrow" aria-hidden="true">&rarr;</div>
+        <div class="delta after"><span>Proposed after</span><p>${renderInline(getField(change, "Proposed after"))}</p></div>
+      </div>
+      <div class="code-delta">${renderTechnicalBlock(blocks.get("before code"), "Before code")}${renderTechnicalBlock(blocks.get("proposed code"), "Proposed code")}</div>
+      <div class="contract-impact"><div><strong>Database impact</strong><p>${renderInline(databaseChanges)}</p></div><div><strong>API impact</strong><p>${renderInline(apiChanges)}</p></div></div>
+      <div class="expected-result">${renderTechnicalBlock(blocks.get("expected result"), "Expected result")}</div>
+      ${databaseDetail}
+      <p class="reason"><strong>Why</strong>${renderInline(getField(change, "Reason"))}</p>
+    </article>`;
+  }).join("\n");
+
+  const applicationFlowCards = applicationFlows.map(renderApplicationFlow).join("\n");
 
   const taskCards = tasks.map((task, index) => `<article class="task-card">
     <div class="task-index">${String(index + 1).padStart(2, "0")}</div>
@@ -338,8 +450,8 @@ function renderPlan(validation) {
   </article>`).join("\n");
 
   const manualCards = manualChecks.entries.map((check) => `<article class="manual-card">
-    <div><span>${renderInline(entryId(check))}</span><strong>${renderInline(entryTitle(check))}</strong><em>${renderInline(getField(check, "Status"))}</em></div>
-    <p>${renderInline(getField(check, "Instructions"))}</p><small>Expected: ${renderInline(getField(check, "Expected"))}</small>
+    <div class="manual-heading"><span>${renderInline(entryId(check))}</span><strong>${renderInline(entryTitle(check))}</strong><small class="manual-requirement">Requirement ${renderInline(getField(check, "Requirement"))}</small><em>${renderInline(getField(check, "Status"))}</em></div>
+    <div class="manual-copy"><div><small>Instructions</small><p>${renderInline(getField(check, "Instructions"))}</p></div><div><small>Expected observation</small><p>${renderInline(getField(check, "Expected"))}</p></div></div>
   </article>`).join("\n");
 
   return `<header class="plan-hero">
@@ -364,26 +476,34 @@ function renderPlan(validation) {
       <div class="section-heading"><span>01</span><div><p>Behavior delta</p><h2>Change blueprint</h2></div></div>
       <div class="change-stack">${changeCards}</div>
     </section>
+    <section class="plan-section application-flow-section">
+      <div class="section-heading"><span>02</span><div><p>User-facing behavior</p><h2>Application flow changes</h2></div></div>
+      ${applicationFlows.length === 0 ? '<p class="single-note">No application flow diagram was recorded for this phase.</p>' : `<div class="application-flow-stack">${applicationFlowCards}</div>`}
+    </section>
     <section class="plan-section">
-      <div class="section-heading"><span>02</span><div><p>Coverage gate</p><h2>Requirement coverage</h2></div></div>
+      <div class="section-heading"><span>03</span><div><p>Coverage gate</p><h2>Requirement coverage</h2></div></div>
       <div class="table-shell"><table class="coverage-table"><thead><tr><th>Requirement</th><th>Tasks</th><th>Checks</th></tr></thead><tbody>${coverageRows}</tbody></table></div>
     </section>
     <section class="plan-section">
-      <div class="section-heading"><span>03</span><div><p>Dependency-aware sequence</p><h2>Execution flow</h2></div></div>
+      <div class="section-heading"><span>04</span><div><p>Dependency-aware sequence</p><h2>Execution flow</h2></div></div>
       ${taskGraph || '<p class="single-note">Single task plan. A dependency diagram will appear when multiple tasks or dependencies exist.</p>'}
       <div class="task-stack">${taskCards}</div>
     </section>
     <section class="plan-section">
-      <div class="section-heading"><span>04</span><div><p>Blast radius</p><h2>File impact map</h2></div></div>
+      <div class="section-heading"><span>05</span><div><p>Blast radius</p><h2>File impact map</h2></div></div>
       <div class="table-shell"><table class="file-table"><thead><tr><th>File</th><th>Changes</th><th>Tasks</th><th>Commit</th></tr></thead><tbody>${fileRows}</tbody></table></div>
     </section>
     <section class="plan-section split-section">
-      <div><div class="section-heading compact"><span>05</span><div><p>Controls</p><h2>Risk register</h2></div></div><div class="risk-stack">${riskCards}</div></div>
-      <div><div class="section-heading compact"><span>06</span><div><p>Delivery shape</p><h2>Commit groups</h2></div></div><div class="commit-stack">${commitCards}</div></div>
+      <div><div class="section-heading compact"><span>06</span><div><p>Controls</p><h2>Risk register</h2></div></div><div class="risk-stack">${riskCards}</div></div>
+      <div><div class="section-heading compact"><span>07</span><div><p>Delivery shape</p><h2>Commit groups</h2></div></div><div class="commit-stack">${commitCards}</div></div>
     </section>
     <section class="plan-section">
-      <div class="section-heading"><span>07</span><div><p>Human evidence</p><h2>Manual checks</h2></div></div>
-      ${sectionIsNone(manualChecks) ? '<p class="empty-state resolved">No manual checks required for this phase.</p>' : `<div class="manual-grid">${manualCards}</div>`}
+      <div class="section-heading"><span>08</span><div><p>Human evidence</p><h2>Manual checks</h2></div></div>
+      ${sectionIsNone(manualChecks) ? '<p class="empty-state resolved">No manual checks required for this phase.</p>' : `<div class="manual-grid" data-layout="rows">${manualCards}</div>`}
+    </section>
+    <section class="plan-section reference-section">
+      <div class="section-heading"><span>09</span><div><p>Traceability</p><h2>Evidence and decision reference</h2></div></div>
+      ${renderReferenceIndex(validation, evidenceRegistry, "plan")}
     </section>
   </main>`;
 }
@@ -415,11 +535,11 @@ section { scroll-margin-top: 1rem; }
 .section-heading.compact { margin-bottom: 1rem; }
 .chip-list { display: inline-flex; flex-wrap: wrap; gap: .35rem; }
 .chip { display: inline-flex; align-items: center; padding: .27rem .5rem; border: 1px solid currentColor; border-radius: 999px; font: 700 .68rem/1.2 "SFMono-Regular", Consolas, monospace; opacity: .82; }
-.identity { display: inline-flex; padding: .12em .34em; border-radius: .35em; font: 750 .86em/1.3 "SFMono-Regular", Consolas, monospace; white-space: nowrap; }
+.identity { display: inline-flex; padding: .12em .34em; border-radius: .35em; font: 750 .86em/1.3 "SFMono-Regular", Consolas, monospace; text-decoration: none; white-space: nowrap; }
 .identity-e, .identity-d { background: #dbeafe; color: #1e40af; }
 .identity-p, .identity-ch { background: #ede9fe; color: #6d28d9; }
 .identity-u, .identity-r { background: #ffedd5; color: #9a3412; }
-.identity-req, .identity-t, .identity-c, .identity-m { background: #e2e8f0; color: #334155; }
+.identity-phase, .identity-req, .identity-t, .identity-c, .identity-m { background: #e2e8f0; color: #334155; }
 .muted { opacity: .6; }
 .diagram-shell { overflow: hidden; border: 1px solid; border-radius: 18px; }
 .diagram-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .9rem 1.1rem; border-bottom: 1px solid; }
@@ -434,6 +554,18 @@ section { scroll-margin-top: 1rem; }
 .graph-subtitle { font: 500 10px Inter, ui-sans-serif, system-ui, sans-serif; opacity: .68; }
 .split-section { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(280px, .8fr); gap: 2rem; }
 .single-note, .empty-state { padding: 1.2rem; border: 1px dashed; border-radius: 14px; line-height: 1.55; }
+.reference-intro { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.reference-intro p { max-width: 760px; margin: 0; line-height: 1.55; }
+.reference-intro > span { flex: 0 0 auto; padding: .38rem .58rem; border: 1px solid; border-radius: 999px; font: 750 .68rem/1 "SFMono-Regular", Consolas, monospace; }
+.reference-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap: .8rem; }
+.reference-card { scroll-margin-top: 1rem; padding: 1rem; border: 1px solid; border-radius: 14px; }
+.reference-card:target { outline: 3px solid; outline-offset: 3px; }
+.reference-heading { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.reference-heading em { font-size: .66rem; font-style: normal; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
+.reference-card > p { min-height: 3.2rem; margin: .8rem 0; line-height: 1.5; }
+.reference-card dl { display: grid; grid-template-columns: 55px 1fr; gap: .4rem .6rem; margin: 0; font-size: .72rem; }
+.reference-card dt { font-weight: 800; text-transform: uppercase; }
+.reference-card dd { margin: 0; overflow-wrap: anywhere; }
 footer { padding-block: 1.25rem 2.5rem; font: 500 .72rem/1.5 "SFMono-Regular", Consolas, monospace; overflow-wrap: anywhere; opacity: .68; }
 @media (max-width: 800px) {
   .metric-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -444,6 +576,7 @@ footer { padding-block: 1.25rem 2.5rem; font: 500 .72rem/1.5 "SFMono-Regular", C
   .metric-row { grid-template-columns: 1fr 1fr; }
   .metric { min-height: 96px; padding: .85rem; }
   .diagram-heading { align-items: flex-start; flex-direction: column; }
+  .reference-intro { align-items: flex-start; flex-direction: column; }
 }
 @media print {
   body { background: white !important; color: black !important; }
@@ -501,6 +634,12 @@ body.roadmap { color: #dbeafe; background-color: #07111f; background-image: line
 .unknown-panel { padding: 1.2rem; border: 1px solid #5b4b29; border-radius: 14px; color: #fde68a; background: rgba(66,48,13,.4); line-height: 1.55; }
 .roadmap .empty-state { border-color: #31506e; color: #8ca8c4; }
 .roadmap .empty-state.resolved { color: #a7f3d0; border-color: #166534; }
+.roadmap .reference-intro { color: #a9bed8; }
+.roadmap .reference-card { border-color: #28415f; background: rgba(16,40,66,.72); }
+.roadmap .reference-card:target { outline-color: #22d3ee; }
+.roadmap .reference-heading em, .roadmap .reference-card dt { color: #67e8f9; }
+.roadmap .reference-card > p { color: #dbeafe; }
+.roadmap .reference-card dd { color: #8ca8c4; }
 .roadmap footer { color: #7894b2; }
 `.trim();
 
@@ -526,6 +665,7 @@ body.plan { color: #1c1917; background: #f4efe5; }
 .change-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
 .change-heading > div:first-child > span { color: #7c3aed; }
 .change-heading h3 { margin: .25rem 0 0; font-size: 1.15rem; }
+.change-heading em { display: inline-flex; margin-top: .55rem; padding: .3rem .48rem; border-radius: 999px; color: #6d28d9; background: #ede9fe; font-size: .66rem; font-style: normal; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .target { display: flex; align-items: flex-end; flex-direction: column; gap: .35rem; text-align: right; }
 .target code { padding: .35rem .5rem; border-radius: 6px; color: #4338ca; background: #eef2ff; }
 .target small { color: #78716c; }
@@ -538,6 +678,58 @@ body.plan { color: #1c1917; background: #f4efe5; }
 .delta.after { border: 1px solid #c4b5fd; background: #f5f3ff; }
 .delta.after span { color: #6d28d9; }
 .delta-arrow { display: grid; place-items: center; color: #7c3aed; font-size: 1.5rem; }
+.code-delta { display: grid; grid-template-columns: 1fr 1fr; gap: .65rem; margin-top: .8rem; }
+.code-panel { min-width: 0; overflow: hidden; border: 1px solid #292524; border-radius: 12px; background: #1c1917; }
+.code-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .65rem .8rem; color: #e7e5e4; border-bottom: 1px solid #44403c; }
+.code-panel-heading strong { font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; }
+.code-panel-heading span { color: #a8a29e; font: 700 .64rem/1 "SFMono-Regular", Consolas, monospace; }
+.code-panel pre { max-height: 320px; margin: 0; padding: .9rem; overflow: auto; color: #e7e5e4; font-size: .75rem; line-height: 1.55; tab-size: 2; white-space: pre; }
+.syntax-comment { color: #8b9a88; font-style: italic; }
+.syntax-keyword { color: #c4b5fd; font-weight: 700; }
+.syntax-string { color: #86efac; }
+.syntax-number { color: #fdba74; }
+.syntax-literal { color: #f9a8d4; font-weight: 700; }
+.syntax-function { color: #93c5fd; }
+.syntax-property { color: #67e8f9; }
+.syntax-variable { color: #fde68a; }
+.missing-detail { display: flex; min-height: 118px; align-items: center; justify-content: center; flex-direction: column; gap: .35rem; padding: 1rem; border: 1px dashed #c4b5fd; border-radius: 12px; color: #7c3aed; background: #faf5ff; text-align: center; }
+.missing-detail strong { font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; }
+.missing-detail span { color: #78716c; font-size: .75rem; }
+.contract-impact { display: grid; grid-template-columns: 1fr 1fr; gap: .65rem; margin-top: .8rem; }
+.contract-impact > div { padding: .8rem; border: 1px solid #d8cebd; border-radius: 10px; background: #f8f3ea; }
+.contract-impact strong, .database-detail > div:first-child > strong { display: block; margin-bottom: .4rem; color: #7c3aed; font-size: .68rem; letter-spacing: .08em; text-transform: uppercase; }
+.contract-impact p, .database-detail p { margin: 0; color: #57534e; line-height: 1.5; }
+.expected-result { margin-top: .8rem; }
+.expected-result .code-panel { border-color: #14532d; background: #052e16; }
+.expected-result .code-panel-heading { color: #dcfce7; border-color: #166534; }
+.expected-result .code-panel-heading span { color: #86efac; }
+.expected-result .code-panel pre { max-height: 420px; }
+.database-detail { display: grid; grid-template-columns: minmax(180px, .65fr) 1fr 1fr; gap: .65rem; margin-top: .8rem; padding: .8rem; border: 1px solid #a5b4fc; border-radius: 12px; background: #eef2ff; }
+.application-flow-stack { display: grid; gap: 1rem; }
+.application-flow-card { overflow: hidden; border: 1px solid #a5b4fc; border-radius: 16px; background: #fffdf8; box-shadow: 0 12px 36px rgba(76,29,149,.07); }
+.application-flow-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: 1rem; color: #fff; background: linear-gradient(135deg, #312e81, #5b21b6); }
+.application-flow-header > div > span { color: #ddd6fe; }
+.application-flow-header h3 { margin: .3rem 0 0; font-size: 1.2rem; }
+.application-flow-header em { flex: 0 0 auto; padding: .35rem .5rem; border: 1px solid #8b5cf6; border-radius: 999px; color: #ede9fe; font-size: .68rem; font-style: normal; font-weight: 800; }
+.application-flow-meta, .application-flow-delta { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; border-bottom: 1px solid #ddd6fe; background: #ddd6fe; }
+.application-flow-meta > div, .application-flow-delta > div { padding: .85rem 1rem; background: #faf5ff; }
+.application-flow-meta small, .application-flow-delta small, .application-flow-evidence > small { display: block; margin-bottom: .38rem; color: #7c3aed; font-size: .65rem; font-weight: 850; letter-spacing: .09em; text-transform: uppercase; }
+.application-flow-meta strong, .application-flow-meta code { color: #292524; }
+.application-flow-delta p { margin: 0; color: #44403c; line-height: 1.5; }
+.application-flow-delta > div:last-child { background: #f0fdf4; }
+.mermaid-shell { padding: 1rem; overflow-x: auto; background: #fff; }
+.mermaid-shell .mermaid { min-width: 760px; margin: 0; color: #44403c; background: #fff; font: 600 .76rem/1.5 "SFMono-Regular", Consolas, monospace; white-space: pre; }
+.mermaid-shell svg { display: block; max-width: none !important; height: auto; margin-inline: auto; }
+.change-point-shell { padding: 1rem; border-top: 1px solid #ddd6fe; background: #faf5ff; }
+.change-point-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .75rem; }
+.change-point-heading strong { color: #5b21b6; font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; }
+.change-point-heading span { color: #78716c; font: 700 .68rem/1 "SFMono-Regular", Consolas, monospace; }
+.change-point-table tbody th { width: 88px; }
+.change-point-table td:nth-child(2) { width: 76px; }
+.change-point-table td:nth-child(3) { min-width: 260px; }
+.change-point-table td:nth-child(3) code, .change-point-table td:nth-child(3) small { display: block; }
+.change-point-table td:nth-child(3) small { margin-top: .35rem; color: #78716c; }
+.application-flow-evidence { padding: .85rem 1rem; border-top: 1px solid #e7ded0; background: #f8f3ea; }
 .reason { display: grid; grid-template-columns: 42px 1fr; gap: .6rem; margin: 1rem 0 0; color: #57534e; line-height: 1.5; }
 .reason strong { color: #7c3aed; font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; }
 .table-shell { overflow-x: auto; border: 1px solid #cfc3b2; border-radius: 14px; background: #fffdf8; }
@@ -589,20 +781,33 @@ tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
 .commit-card p { margin: 0; color: #7c3aed; }
 .commit-card h3 { margin: .35rem 0 .7rem; font-size: .88rem; }
 .commit-card small { display: block; margin-top: .7rem; color: #78716c; }
-.manual-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: .8rem; }
-.manual-card { padding: 1rem; border: 1px solid #bae6fd; border-radius: 14px; background: #f0f9ff; }
-.manual-card > div { display: flex; align-items: center; gap: .55rem; }
-.manual-card > div > span { color: #0369a1; }
-.manual-card em { margin-left: auto; color: #0369a1; font-size: .7rem; }
-.manual-card p { margin: .8rem 0; line-height: 1.5; }
-.manual-card small { color: #57534e; }
+.manual-grid { display: grid; grid-template-columns: 1fr; gap: .8rem; }
+.manual-card { display: grid; grid-template-columns: minmax(210px, .32fr) 1fr; gap: 1rem; padding: 1rem; border: 1px solid #bae6fd; border-radius: 14px; background: #f0f9ff; }
+.manual-heading { display: grid; align-content: start; grid-template-columns: auto 1fr; gap: .5rem; }
+.manual-heading > span { color: #0369a1; }
+.manual-heading strong { line-height: 1.4; }
+.manual-requirement { grid-column: 1 / -1; color: #57534e; }
+.manual-heading em { grid-column: 1 / -1; justify-self: start; padding: .3rem .45rem; border-radius: 999px; color: #0369a1; background: #e0f2fe; font-size: .68rem; font-style: normal; }
+.manual-copy { display: grid; gap: .75rem; }
+.manual-copy > div { padding: .75rem; border-radius: 10px; background: rgba(255,255,255,.68); }
+.manual-copy small { display: block; margin-bottom: .35rem; color: #0369a1; font-size: .65rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.manual-copy p { margin: 0; color: #44403c; line-height: 1.55; }
 .plan .single-note, .plan .empty-state { color: #78716c; border-color: #cfc3b2; background: #fffdf8; }
 .plan .empty-state.resolved { color: #166534; border-color: #86efac; background: #f0fdf4; }
+.plan .reference-intro { color: #57534e; }
+.plan .reference-card { border-color: #d8cebd; background: #fffdf8; }
+.plan .reference-card:target { outline-color: #8b5cf6; }
+.plan .reference-heading em, .plan .reference-card dt { color: #7c3aed; }
+.plan .reference-card dd { color: #78716c; }
 .plan footer { color: #78716c; }
 @media (max-width: 720px) {
   .brief-grid, .task-meta { grid-template-columns: 1fr; }
   .delta-lane { grid-template-columns: 1fr; }
   .delta-arrow { transform: rotate(90deg); }
+  .code-delta, .contract-impact, .database-detail { grid-template-columns: 1fr; }
+  .application-flow-header { flex-direction: column; }
+  .application-flow-meta, .application-flow-delta { grid-template-columns: 1fr; }
+  .manual-card { grid-template-columns: 1fr; }
   .change-heading, .task-title { align-items: flex-start; flex-direction: column; }
   .target { align-items: flex-start; text-align: left; }
   .task-card { grid-template-columns: 46px 1fr; }
@@ -632,7 +837,34 @@ export function renderArtifact(kind, source, options = {}) {
   }
 
   const title = validation.document.title?.text ?? `Phasecraft ${kind}`;
-  const body = kind === "roadmap" ? renderRoadmap(validation) : renderPlan(validation);
+  const body = kind === "roadmap"
+    ? renderRoadmap(validation, options.evidenceRegistry)
+    : renderPlan(validation, options.evidenceRegistry);
+  const hasMermaid = kind === "plan"
+    && (validation.document.sections.get("Application Flows")?.entries.length ?? 0) > 0;
+  const mermaidRuntime = hasMermaid ? `<script data-phasecraft-renderer="mermaid" src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+<script data-phasecraft-renderer="mermaid-init">
+if (window.mermaid) {
+  window.mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: "strict",
+    theme: "base",
+    deterministicIds: true,
+    deterministicIDSeed: "${validation.sourceHash}",
+    flowchart: { curve: "basis", htmlLabels: false, useMaxWidth: false },
+    themeVariables: {
+      fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+      primaryColor: "#ede9fe",
+      primaryTextColor: "#292524",
+      primaryBorderColor: "#7c3aed",
+      lineColor: "#6d28d9",
+      secondaryColor: "#f0fdf4",
+      tertiaryColor: "#fff7ed"
+    }
+  });
+  window.mermaid.run({ querySelector: ".mermaid" });
+}
+</script>` : "";
   const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -647,6 +879,7 @@ export function renderArtifact(kind, source, options = {}) {
 <body class="${kind}">
 ${body}
 <footer>Authoritative source: Markdown / schema v${ARTIFACT_SCHEMA_VERSION} / SHA-256 ${validation.sourceHash}</footer>
+${mermaidRuntime}
 </body>
 </html>
 `;

@@ -52,6 +52,27 @@ test("CLI drives an explicit initialized to plan draft workflow", async (t) => {
   const preflight = await run(["preflight", "--root", root, "--work", "FEATURE-3", "--stage", "verify-plan"]);
   assert.equal(preflight.preflight.allowed, true);
   assert.equal(preflight.preflight.revision, 5);
+
+  const handoffData = {
+    stage: "plan",
+    stateStatus: "plan_draft",
+    stateRevision: 5,
+    outcome: "completed",
+    objectiveHandled: "Prepared P-01 for independent audit.",
+    authoritativeInputsRead: ["CONTEXT.md", "research/EVIDENCE.json"],
+    evidenceAndDecisionsUsed: ["E-001", "D-001"],
+    artifactsChanged: ["plan/phases/P-01-safer-shipping/PLAN.md"],
+    validationPerformed: ["Restricted plan validation passed."],
+    openQuestionsOrBlockers: ["none"],
+    exactNextAction: "Run /phasecraft-verify-plan --work FEATURE-3.",
+  };
+  const written = await run([
+    "handoff-write", "--root", root, "--work", "FEATURE-3", "--agent", "phasecraft-planner", "--data", JSON.stringify(handoffData),
+  ]);
+  assert.equal(written.handoff.path, "handoffs/phasecraft-planner/H-001.md");
+  const handoffs = await run(["handoff-list", "--root", root, "--work", "FEATURE-3", "--all"]);
+  assert.equal(handoffs.total, 1);
+  assert.equal(handoffs.agents.find(({ agent }) => agent === "phasecraft-planner").latest.outcome, "completed");
 });
 
 test("CLI captures, adopts, snapshots, previews, and ships exact files", async (t) => {

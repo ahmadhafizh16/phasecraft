@@ -8,3 +8,5 @@ Load the `phasecraft` skill and perform only Ship for `$ARGUMENTS`. Run the `shi
 Show the complete preview and request one explicit approval for that exact fingerprint. If verification is `verified_pending`, separately list every pending check and require a second acknowledgement bound to the same fingerprint. Execute Ship only through the Phasecraft runtime. Any HEAD, worktree, group, message, or check drift invalidates approval and requires a new preview.
 
 Write `SHIP.md`, transition to `shipped`, and report created commit hashes. Never push, create a PR, stage unrelated files, bypass hooks, amend, reset, or force any Git operation.
+
+Run `handoff-list --all` and read the latest verifier plus all prior shipper handoffs before preview. Before every return, invoke `handoff-write --agent phasecraft-shipper` with preview fingerprint, approvals, drift checks, commit hashes or blocker, and exact next action; never allocate `H-NNN.md` manually.

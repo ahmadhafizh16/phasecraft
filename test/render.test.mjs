@@ -37,21 +37,47 @@ const dependencyRoadmap = validRoadmap.replace("\n## Risks", `
 
 ## Risks`);
 
+const databasePlan = validPlan
+  .replace("- Change type: code", "- Change type: database")
+  .replace("- Database changes: none", "- Database changes: Add a constrained session_timeout column.")
+  .replace("- API changes: none", "- API changes: Expose the normalized timeout in the session response.")
+  .replace(
+    "\n## Application Flows",
+    "\n#### Database migration\n```sql\nALTER TABLE sessions ADD COLUMN session_timeout INTEGER NOT NULL;\n```\n\n#### Rollback plan\n```sql\nALTER TABLE sessions DROP COLUMN session_timeout;\n```\n\n## Application Flows",
+  );
+
+const manualPlan = validPlan.replace("## Manual Checks\nNone.", `## Manual Checks
+### M-001: Verify invalid timeout rejection
+- Requirement: REQ-001
+- Instructions: Submit a timeout below the supported minimum and record the response.
+- Expected: The request is rejected before a session is created.
+- Status: pending
+
+### M-002: Verify supported boundary
+- Requirement: REQ-001
+- Instructions: Submit the exact lower supported boundary and inspect the created session.
+- Expected: The session is created with the supplied boundary value.
+- Status: pending`);
+
+const noApplicationFlowPlan = validPlan
+  .replace("- Flow impact: F-001 inserts bounded validation before session construction and rejects invalid input before state is created.", "- Flow impact: none")
+  .replace(/\n## Application Flows[\s\S]*?(?=\n## Tasks)/u, "");
+
 test("renders deterministic standalone HTML bound to the Markdown hash", () => {
   const first = renderArtifact("plan", validPlan, { evidenceRegistry }).html;
   const second = renderArtifact("plan", validPlan, { evidenceRegistry }).html;
   assert.equal(first, second);
   assert.match(first, /<!doctype html>/u);
   assert.match(first, new RegExp(sha256(validPlan), "u"));
-  assert.doesNotMatch(first, /<script\b/iu);
-  assert.doesNotMatch(first, /https?:\/\//iu);
+  assert.match(first, /data-phasecraft-renderer="mermaid"/u);
+  assert.match(first, /mermaid@11\.4\.1/u);
 });
 
 test("escapes hostile source text", () => {
   const hostile = validPlan.replace(
     "Make timeout handling bounded and observable. D-001",
     "Make <script>alert('x')</script> timeout handling bounded. D-001",
-  );
+  ).replace("assertTimeoutInRange(timeout);", "<script>alert('code')</script>");
   const html = renderArtifact("plan", hostile, { evidenceRegistry }).html;
   assert.doesNotMatch(html, /<script>/iu);
   assert.match(html, /&lt;script&gt;/u);
@@ -88,6 +114,68 @@ test("adds dependency diagrams only when relationships need visualization", () =
   assert.match(plan, /T-001/u);
   assert.match(plan, /T-002/u);
   assert.match(plan, /<svg class="dependency-graph"/u);
+});
+
+test("resolves evidence identities to claims and provenance", () => {
+  const html = renderArtifact("plan", validPlan, { evidenceRegistry }).html;
+  const roadmap = renderArtifact("roadmap", validRoadmap, { evidenceRegistry }).html;
+  assert.match(html, /href="#reference-D-001"/u);
+  assert.match(html, /id="reference-D-001"/u);
+  assert.match(html, /Timeouts remain configurable\./u);
+  assert.match(html, /user \/ discussion/u);
+  assert.match(html, /confirmed/u);
+  assert.match(html, /data-reference-index="plan"/u);
+  assert.doesNotMatch(html, /href="#reference-REQ-001"/u);
+  assert.doesNotMatch(html, /href="#reference-P-01"/u);
+  assert.match(html, /class="identity identity-phase">P-01<\/span>/u);
+  assert.match(roadmap, /data-reference-index="roadmap"/u);
+  assert.match(roadmap, /id="reference-E-001"/u);
+});
+
+test("visualizes code deltas and database contract changes", () => {
+  const html = renderArtifact("plan", databasePlan, { evidenceRegistry }).html;
+  assert.match(html, /Before code/u);
+  assert.match(html, /Proposed code/u);
+  assert.match(html, /<span class="syntax-function">assertTimeoutInRange<\/span>\(timeout\)/u);
+  assert.match(html, /Database impact/u);
+  assert.match(html, /Add a constrained session_timeout column/u);
+  assert.match(html, /Migration detail/u);
+  assert.match(html, /session_timeout/u);
+  assert.match(html, /Rollback plan/u);
+  assert.match(html, /API impact/u);
+  assert.match(html, /Expected result/u);
+  assert.match(html, /<span class="syntax-keyword">ALTER<\/span>/u);
+  assert.match(html, /<span class="syntax-keyword">DROP<\/span>/u);
+});
+
+test("highlights code and renders Mermaid application flows from Markdown", () => {
+  const html = renderArtifact("plan", validPlan, { evidenceRegistry }).html;
+  assert.match(html, /<span class="syntax-keyword">export<\/span>/u);
+  assert.match(html, /<span class="syntax-function">createSession<\/span>/u);
+  assert.match(html, /data-application-flow="F-001"/u);
+  assert.match(html, /<pre class="mermaid">flowchart LR/u);
+  assert.match(html, /BEFORE · direct construction/u);
+  assert.match(html, /AFTER · bounded construction/u);
+  assert.match(html, /Surgical application changes/u);
+  assert.match(html, /src\/session\.mjs/u);
+  assert.match(html, /Insert the bounds assertion/u);
+  assert.match(html, /<span class="syntax-property">&quot;timeout&quot;<\/span>/u);
+  assert.match(html, /mermaid\.initialize/u);
+  assert.doesNotMatch(html, /class="affected-flow"/u);
+});
+
+test("loads Mermaid only when authoritative application flows exist", () => {
+  const html = renderArtifact("plan", noApplicationFlowPlan, { evidenceRegistry }).html;
+  assert.doesNotMatch(html, /data-phasecraft-renderer="mermaid"/u);
+  assert.match(html, /No application flow diagram was recorded/u);
+});
+
+test("renders manual verification as one full-width row per item", () => {
+  const html = renderArtifact("plan", manualPlan, { evidenceRegistry }).html;
+  assert.match(html, /class="manual-grid" data-layout="rows"/u);
+  assert.equal((html.match(/class="manual-card"/gu) ?? []).length, 2);
+  assert.match(html, /\.manual-grid \{ display: grid; grid-template-columns: 1fr;/u);
+  assert.match(html, /Expected observation/u);
 });
 
 test("writes rendered HTML to a requested file", async (t) => {

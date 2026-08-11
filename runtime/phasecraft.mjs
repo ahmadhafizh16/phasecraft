@@ -14,6 +14,7 @@ import {
   resolveWork,
   transitionWork,
   updateWorkState,
+  withWorkLock,
   writeJsonAtomic,
 } from "./state.mjs";
 import {
@@ -110,6 +111,8 @@ function help() {
       "research-approve": "Record one work-scoped external research approval",
       "phase-start": "Select the next roadmap phase for just-in-time planning",
       "verification-result": "Record verification outcome and pending manual checks",
+      "handoff-list": "List durable agent handoffs for a work item",
+      "handoff-write": "Atomically write the next immutable agent handoff",
     },
   };
 }
@@ -217,6 +220,29 @@ async function run(argv) {
       id: typeof flags.work === "string" ? flags.work : positional[0],
       branch: typeof flags.branch === "string" ? flags.branch : null,
     });
+  }
+
+  if (command === "handoff-list" || command === "handoff-write") {
+    const root = await projectRoot(flags);
+    const resolved = await resolveWork(root, {
+      id: typeof flags.work === "string" ? flags.work : positional[0],
+      branch: typeof flags.branch === "string" ? flags.branch : null,
+    });
+    const { listHandoffs, writeHandoff } = await import("./handoffs.mjs");
+    if (command === "handoff-list") {
+      return {
+        work: resolved.record.id,
+        artifactRoot: resolved.state.artifactRoot,
+        ...await listHandoffs(resolved.state.artifactRoot, { includeAll: flags.all === true }),
+      };
+    }
+    const data = await jsonFromFlagOrFile(flags, "data", null);
+    const handoff = await withWorkLock(root, resolved.record.key, () => writeHandoff(
+      resolved.state.artifactRoot,
+      required(flags, "agent"),
+      data,
+    ));
+    return { work: resolved.record.id, artifactRoot: resolved.state.artifactRoot, handoff };
   }
 
   if (["baseline", "baseline-clean", "adopt", "snapshot", "ship-preview", "ship"].includes(command)) {

@@ -18,8 +18,9 @@ Phasecraft does not assume Jira, branch naming, a remote ticket system, CI, push
 6. An approved plan is historical evidence. Material deviations archive it before replanning.
 7. Execution creates no commits. Ship creates no push or pull request.
 8. Pre-existing unrelated changes are never reverted or silently staged.
-9. Markdown is authoritative. Generated HTML is escaped, deterministic, offline, and SHA-bound.
+9. Markdown is authoritative. Generated HTML source is escaped, deterministic, and SHA-bound; application diagrams use a pinned strict Mermaid renderer with source fallback.
 10. Runtime state uses atomic writes, revisions, and same-work locks.
+11. Every resolved Phasecraft agent invocation writes one atomically sequenced immutable handoff before returning, including blocked and no-change rounds.
 
 ## Work Resolution
 
@@ -54,9 +55,9 @@ Before each network lookup, Discuss presents the question and intended source cl
 
 ### Plan
 
-Plan checks authority drift, maintains the full roadmap, and details only the next executable phase. Each technical change names a file, symbol, evidence-backed before state, labeled proposed after state, and reason. Each task names evidence, dependencies, files, change, checks, and commit group. Risks include impact, mitigation, possible solution, and evidence.
+Plan checks authority drift, maintains the full roadmap, and details only the next executable phase. Each technical change names its type, file, symbol, evidence-backed before state, labeled proposed after state, reason, database impact, API impact, and `F-*` application-flow impact, with concrete language-tagged before/proposed snapshots, a concrete expected-result object/payload/observation, plus migration and rollback where applicable. Application flows trace user-facing surfaces through separate Mermaid BEFORE/AFTER lanes, map behavior-changing AFTER nodes to owning phase/file/symbol/edit, and retain owning-phase context even for known later-phase behavior. Each task names evidence, dependencies, files, change, checks, and commit group. Risks include impact, mitigation, possible solution, and evidence. Manual checks are independent executable scenarios with exact instructions and observable results.
 
-Plan validates restricted Markdown and generates `roadmap.html` and `plan.html` in both artifact modes. The two derivatives are intentionally different: the roadmap is a strategic phase/dependency atlas, while the plan is an execution cockpit for change deltas, requirement coverage, task order, file impact, risks, checks, and commit groups. Native dependency diagrams are generated only when multiple nodes or declared dependencies make them informative.
+Plan validates restricted Markdown and generates `roadmap.html` and `plan.html` in both artifact modes. The two derivatives are intentionally different: the roadmap is a strategic phase/dependency atlas, while the plan is an implementation review cockpit for server-side syntax-highlighted before/proposed code and expected results, Mermaid BEFORE/AFTER application-flow comparisons, surgical change tables, database/API impact, migration and rollback detail, requirement coverage, task order, file impact, risks, row-based manual checks, and commit groups. Evidence identities link to registry-backed claim, provenance, and status cards. Native task dependency diagrams are generated only when multiple nodes or declared dependencies make them informative. Application diagrams load a pinned Mermaid browser renderer with strict security and preserve source fallback.
 
 ### Verify Plan
 
@@ -66,6 +67,8 @@ The plan auditor runs in an independent OpenCode subtask. It validates:
 - Every requirement and its observable checks.
 - At least two semicolon-separated observations for each task.
 - Before-state evidence and proposal labels.
+- Concrete expected output snapshots and complete representative database/API results.
+- Evidence-backed surgical mappings for every behavior-changing AFTER node.
 - Dependencies and commit groups.
 - Risk mitigation and manual checks.
 - Dirty baseline overlap and unrelated scope.
@@ -101,7 +104,13 @@ One user approval authorizes that exact fingerprint. `verified_pending` requires
 
 ### Status
 
-Status is read-only. It reports the work state and revision, active plan version, authority drift, unknowns, pending checks, adoption, and the next legal stage.
+Status does not change semantic artifacts or runtime state. It reports the work state and revision, active plan version, authority drift, unknowns, pending checks, adoption, latest per-agent handoffs, missing handoff gaps, and the next legal stage, then records its own immutable manager navigation handoff.
+
+## Durable Handoffs
+
+Conversation history is not workflow authority. After work resolution, every manager, researcher, planner, plan-auditor, executor, verifier, and shipper invocation reads the relevant existing handoffs, verifies their claims against authoritative artifacts/state/repository content, and writes a new handoff before returning for any outcome.
+
+`handoff-list` discovers latest or complete per-agent history. `handoff-write` accepts validated structured data, holds the same-work lock, allocates the next `H-NNN`, exclusively creates `handoffs/<agent>/H-NNN.md`, computes the prior `Supersedes` path, and sets mode `0444`. It neither changes workflow status nor increments state revision. Handoffs are concise navigation records, never evidence or substitutes for semantic/runtime artifacts, and may not contain secrets, credentials, raw PII, or unsupported facts.
 
 ## Evidence Identities
 

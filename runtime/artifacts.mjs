@@ -16,12 +16,20 @@ const PLAN_SECTIONS = [
   "Manual Checks",
 ];
 
+const PLAN_ALLOWED_SECTIONS = [...PLAN_SECTIONS, "Application Flows"];
+
 const ROADMAP_SECTIONS = ["Objective", "Requirements", "Phases", "Risks", "Unknowns"];
 
 const ENTRY_SCHEMAS = Object.freeze({
   "Technical Design": {
     heading: /^CH-\d{3}:\s+.+$/u,
     fields: ["File", "Symbol", "Before", "Proposed after", "Reason"],
+    optionalFields: ["Change type", "Database changes", "API changes", "Flow impact"],
+  },
+  "Application Flows": {
+    heading: /^F-\d{3}:\s+.+$/u,
+    fields: ["Surface", "Entry point", "Phase", "Before", "After", "Evidence"],
+    optionalEntries: true,
   },
   Tasks: {
     heading: /^T-\d{3}:\s+.+$/u,
@@ -68,10 +76,22 @@ export function parseRestrictedMarkdown(source) {
   const document = { title: null, extraTitles: [], sections: new Map(), lines };
   let section = null;
   let entry = null;
+  let inFence = false;
 
   for (let index = 0; index < lines.length; index += 1) {
     const text = lines[index];
     const line = index + 1;
+    if (/^```[^`]*$/u.test(text)) {
+      if (entry) entry.content.push({ text, line });
+      else if (section) section.content.push({ text, line });
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) {
+      if (entry) entry.content.push({ text, line });
+      else if (section) section.content.push({ text, line });
+      continue;
+    }
     const h1 = text.match(/^#\s+(.+)$/u);
     if (h1) {
       if (!document.title) document.title = { text: h1[1].trim(), line };
@@ -107,18 +127,82 @@ export function parseRestrictedMarkdown(source) {
   return document;
 }
 
+export function parseEntryDetailBlocks(entry) {
+  const allowed = new Map([
+    ["before code", "Before code"],
+    ["proposed code", "Proposed code"],
+    ["database migration", "Database migration"],
+    ["rollback plan", "Rollback plan"],
+    ["diagram", "Diagram"],
+    ["expected result", "Expected result"],
+    ["change points", "Change points"],
+  ]);
+  const blocks = new Map();
+  let current = null;
+  let inFence = false;
+  for (const { text, line } of entry.content ?? []) {
+    if (inFence) {
+      if (/^```\s*$/u.test(text)) {
+        inFence = false;
+      } else {
+        current.lines.push(text);
+      }
+      continue;
+    }
+    const heading = text.match(/^####\s+(.+)$/u);
+    if (heading) {
+      const normalized = heading[1].trim().toLowerCase();
+      const title = allowed.get(normalized);
+      current = title ? { title, line, language: "", lines: [] } : null;
+      if (current) blocks.set(title.toLowerCase(), current);
+      inFence = false;
+      continue;
+    }
+    if (!current) continue;
+    const fence = text.match(/^```([^`]*)$/u);
+    if (fence) {
+      current.language = fence[1].trim();
+      inFence = true;
+      continue;
+    }
+  }
+  for (const block of blocks.values()) block.text = block.lines.join("\n").trim();
+  return blocks;
+}
+
+export function parseChangePoints(block) {
+  const points = [];
+  const errors = [];
+  for (const [index, source] of (block?.text?.split("\n") ?? []).entries()) {
+    const text = source.trim();
+    if (!text || text.startsWith("//")) continue;
+    const columns = text.split("|").map((value) => value.trim());
+    const line = (block?.line ?? 1) + index + 2;
+    if (columns.length !== 5 || columns.some((value) => !value)) {
+      errors.push(issue("Change point must use 'Node | Phase | File | Symbol | Surgical change'", line, "CHANGE_POINT_INVALID"));
+      continue;
+    }
+    const [node, phase, file, symbol, change] = columns;
+    if (!/^[A-Za-z][A-Za-z0-9_-]*$/u.test(node)) errors.push(issue(`Invalid Mermaid node id '${node}'`, line, "CHANGE_POINT_NODE_INVALID"));
+    if (!/^P-\d{2}$/u.test(phase)) errors.push(issue(`Invalid change-point phase '${phase}'`, line, "CHANGE_POINT_PHASE_INVALID"));
+    points.push({ node, phase, file, symbol, change, line });
+  }
+  if (points.length === 0) errors.push(issue("At least one surgical change point is required", block?.line, "CHANGE_POINTS_EMPTY"));
+  return { valid: errors.length === 0, points, errors };
+}
+
 function nonEmptySection(section) {
   if (section.entries.length > 0) return true;
   return section.content.some(({ text }) => text.trim() !== "");
 }
 
-function validateBase(document, requiredSections, errors) {
+function validateBase(document, requiredSections, errors, allowedSections = requiredSections) {
   if (!document.title) errors.push(issue("Document must start with one level-one title", 1, "TITLE_MISSING"));
   for (const title of document.extraTitles) {
     errors.push(issue(`Unexpected additional level-one title: ${title.text}`, title.line, "TITLE_DUPLICATE"));
   }
   for (const section of document.sections.values()) {
-    if (!requiredSections.includes(section.name)) {
+    if (!allowedSections.includes(section.name)) {
       errors.push(issue(`Unknown level-two section: ${section.name}`, section.line, "SECTION_UNKNOWN"));
     }
   }
@@ -148,7 +232,7 @@ function validateEntries(section, schema, errors) {
         errors.push(issue(`${entry.heading} is missing field '${field}'`, entry.line, "FIELD_MISSING"));
       }
     }
-    const allowed = new Set(schema.fields.map((field) => field.toLowerCase()));
+    const allowed = new Set([...schema.fields, ...(schema.optionalFields ?? [])].map((field) => field.toLowerCase()));
     for (const [name, field] of entry.fields) {
       if (!allowed.has(name)) errors.push(issue(`${entry.heading} has unknown field '${name}'`, field.line, "FIELD_UNKNOWN"));
     }
@@ -206,6 +290,90 @@ function validatePlanSemantics(document, errors, warnings) {
     const proposed = entry.fields.get("proposed after")?.value ?? "";
     if (!/\bPROPOSED\b/u.test(proposed) && !/\bP-\d{3,}\b/u.test(proposed)) {
       errors.push(issue(`${entry.heading} Proposed after must be labeled PROPOSED or cite P-*`, entry.line));
+    }
+    for (const [field, code] of [
+      ["change type", "TECHNICAL_TYPE_MISSING"],
+      ["database changes", "DATABASE_IMPACT_MISSING"],
+      ["api changes", "API_IMPACT_MISSING"],
+      ["flow impact", "FLOW_IMPACT_MISSING"],
+    ]) {
+      if (!entry.fields.get(field)?.value) {
+        warnings.push(issue(`${entry.heading} should declare '${field}' for technical visualization`, entry.line, code));
+      }
+    }
+    const blocks = parseEntryDetailBlocks(entry);
+    for (const name of ["before code", "proposed code"]) {
+      if (!blocks.get(name)?.text) {
+        warnings.push(issue(`${entry.heading} should include a '${name}' detail block`, entry.line, "TECHNICAL_CODE_MISSING"));
+      }
+    }
+    const databaseChanges = entry.fields.get("database changes")?.value ?? "";
+    if (databaseChanges && databaseChanges.toLowerCase() !== "none") {
+      if (!blocks.get("database migration")?.text) {
+        warnings.push(issue(`${entry.heading} declares database changes without a Database migration block`, entry.line, "DATABASE_DETAIL_MISSING"));
+      }
+      if (!blocks.get("rollback plan")?.text) {
+        warnings.push(issue(`${entry.heading} declares database changes without a Rollback plan block`, entry.line, "ROLLBACK_DETAIL_MISSING"));
+      }
+    }
+    if (!blocks.get("expected result")?.text) {
+      warnings.push(issue(`${entry.heading} should include an Expected result block`, entry.line, "EXPECTED_RESULT_MISSING"));
+    }
+  }
+
+  const applicationFlows = document.sections.get("Application Flows");
+  const flowEntries = applicationFlows?.entries ?? [];
+  const flowIds = new Set(flowEntries.map((entry) => entry.heading.split(":")[0]));
+  const impactedChanges = (technical?.entries ?? []).filter((entry) => {
+    const impact = entry.fields.get("flow impact")?.value ?? "";
+    return impact && impact.toLowerCase() !== "none";
+  });
+  if (impactedChanges.length > 0 && flowEntries.length === 0) {
+    warnings.push(issue("Runtime flow impact is declared but Application Flows is missing or empty", technical?.line, "APPLICATION_FLOW_MISSING"));
+  }
+  for (const change of impactedChanges) {
+    const impact = change.fields.get("flow impact")?.value ?? "";
+    if (!/\bF-\d{3}\b/u.test(impact)) {
+      warnings.push(issue(`${change.heading} Flow impact should reference an Application Flow F-*`, change.line, "APPLICATION_FLOW_REFERENCE_MISSING"));
+    }
+    for (const match of impact.matchAll(/\b(F-\d{3})\b/gu)) {
+      if (flowIds.size > 0 && !flowIds.has(match[1])) errors.push(issue(`${change.heading} references unknown application flow ${match[1]}`, change.line, "APPLICATION_FLOW_UNKNOWN"));
+    }
+  }
+  for (const entry of flowEntries) {
+    const blocks = parseEntryDetailBlocks(entry);
+    const diagram = blocks.get("diagram");
+    if (!diagram?.text) {
+      errors.push(issue(`${entry.heading} requires a Diagram block`, entry.line, "APPLICATION_FLOW_DIAGRAM_MISSING"));
+      continue;
+    }
+    if (diagram.language.toLowerCase() !== "mermaid") {
+      errors.push(issue(`${entry.heading} Diagram block must use the 'mermaid' language`, diagram.line, "APPLICATION_FLOW_LANGUAGE_INVALID"));
+    }
+    if (!/^\s*(?:flowchart|graph)\s+(?:TB|TD|BT|RL|LR)\b/mu.test(diagram.text)) {
+      errors.push(issue(`${entry.heading} Diagram must start with a Mermaid flowchart direction`, diagram.line, "APPLICATION_FLOW_DIAGRAM_INVALID"));
+    }
+    if (/%%\{|<\/?(?:script|iframe|object)\b/iu.test(diagram.text)) {
+      errors.push(issue(`${entry.heading} Diagram contains an unsafe Mermaid directive or element`, diagram.line, "APPLICATION_FLOW_DIAGRAM_UNSAFE"));
+    }
+    if (!/subgraph\s+BEFORE\b/iu.test(diagram.text) || !/subgraph\s+AFTER\b/iu.test(diagram.text)) {
+      warnings.push(issue(`${entry.heading} should separate BEFORE and AFTER subgraphs`, diagram.line, "APPLICATION_FLOW_LANES_MISSING"));
+    }
+    const changePoints = blocks.get("change points");
+    if (!changePoints?.text) {
+      warnings.push(issue(`${entry.heading} should map Mermaid nodes to surgical change points`, entry.line, "CHANGE_POINTS_MISSING"));
+      continue;
+    }
+    if (changePoints.language.toLowerCase() !== "changes") {
+      errors.push(issue(`${entry.heading} Change points block must use the 'changes' language`, changePoints.line, "CHANGE_POINTS_LANGUAGE_INVALID"));
+      continue;
+    }
+    const parsedPoints = parseChangePoints(changePoints);
+    errors.push(...parsedPoints.errors);
+    for (const point of parsedPoints.points) {
+      if (!new RegExp(`\\b${point.node.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}\\b`, "u").test(diagram.text)) {
+        errors.push(issue(`${entry.heading} change point references unknown Mermaid node ${point.node}`, point.line, "CHANGE_POINT_NODE_UNKNOWN"));
+      }
     }
   }
 
@@ -331,8 +499,9 @@ export function validatePlan(source, options = {}) {
   const document = parseRestrictedMarkdown(source);
   const errors = [];
   const warnings = [];
-  validateBase(document, PLAN_SECTIONS, errors);
-  for (const name of ["Technical Design", "Tasks", "Risk Controls", "Commit Groups", "Manual Checks"]) {
+  validateBase(document, PLAN_SECTIONS, errors, PLAN_ALLOWED_SECTIONS);
+  for (const name of ["Technical Design", "Application Flows", "Tasks", "Risk Controls", "Commit Groups", "Manual Checks"]) {
+    if (name === "Application Flows" && !document.sections.has(name)) continue;
     validateEntries(document.sections.get(name), ENTRY_SCHEMAS[name], errors);
   }
   if (errors.length === 0) validatePlanSemantics(document, errors, warnings);
