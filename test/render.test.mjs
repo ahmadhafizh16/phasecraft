@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { archivePlanVersion, sha256 } from "../runtime/artifacts.mjs";
-import { renderArtifact, renderArtifactFile } from "../runtime/render.mjs";
+import { validateAnchor } from "../runtime/feedback.mjs";
+import { parseReviewManifest, renderArtifact, renderArtifactFile } from "../runtime/render.mjs";
 import { evidenceRegistry, validPlan, validRoadmap } from "../test-data/artifacts.mjs";
 
 const dependencyPlan = validPlan
@@ -89,14 +90,118 @@ test("renders deterministic standalone HTML bound to the Markdown hash", () => {
   assert.match(first, /mermaid@11\.4\.1/u);
 });
 
-test("escapes hostile source text", () => {
+test("adds unique deterministic review anchors and an ordered manifest", () => {
+  for (const [kind, source] of [["roadmap", validRoadmap], ["plan", validPlan]]) {
+    const first = renderArtifact(kind, source, { evidenceRegistry }).html;
+    const second = renderArtifact(kind, source, { evidenceRegistry }).html;
+    const anchors = [...first.matchAll(/data-phasecraft-anchor="([^"]+)"/gu)].map((match) => match[1]);
+    const labels = [...first.matchAll(/data-phasecraft-anchor-label="([^"]*)"/gu)].map((match) => match[1]);
+    const manifest = parseReviewManifest(first);
+
+    assert.equal(first, second);
+    assert.equal(new Set(anchors).size, anchors.length);
+    assert.equal(labels.length, anchors.length);
+    assert.deepEqual(manifest.entries.map((entry) => entry.semantic), anchors);
+    assert.deepEqual(manifest, parseReviewManifest(second));
+    assert.ok(manifest.entries.every((entry) => (
+      typeof entry.label === "string"
+      && entry.label.length > 0
+      && typeof entry.plainText === "string"
+    )));
+  }
+});
+
+test("every rendered semantic anchor is accepted by feedback validation", () => {
+  for (const [kind, source] of [["plan", validPlan], ["roadmap", validRoadmap]]) {
+    const manifest = parseReviewManifest(renderArtifact(kind, source, { evidenceRegistry }).html);
+    for (const entry of manifest.entries) {
+      assert.deepEqual(validateAnchor({ semantic: entry.semantic }), { semantic: entry.semantic });
+    }
+  }
+});
+
+test("names practical roadmap and plan review units", () => {
+  const roadmapManifest = parseReviewManifest(renderArtifact("roadmap", validRoadmap, { evidenceRegistry }).html);
+  const planManifest = parseReviewManifest(renderArtifact("plan", validPlan, { evidenceRegistry }).html);
+  const databaseManifest = parseReviewManifest(renderArtifact("plan", databasePlan, { evidenceRegistry }).html);
+  const manualManifest = parseReviewManifest(renderArtifact("plan", manualPlan, { evidenceRegistry }).html);
+  const semantics = (manifest) => new Set(manifest.entries.map((entry) => entry.semantic));
+
+  const roadmapSemantics = semantics(roadmapManifest);
+  for (const expected of [
+    "roadmap/objective",
+    "roadmap/requirements/REQ-001",
+    "roadmap/phases/P-01",
+    "roadmap/risks/R-001",
+    "roadmap/unknowns",
+    "roadmap/references/E-001",
+  ]) assert.ok(roadmapSemantics.has(expected), `missing ${expected}`);
+
+  const planSemantics = semantics(planManifest);
+  for (const expected of [
+    "plan/goal",
+    "plan/inputs",
+    "plan/requirements/REQ-001",
+    "plan/technical-design/CH-001",
+    "plan/technical-design/CH-001/field/before",
+    "plan/technical-design/CH-001/field/proposed-after",
+    "plan/technical-design/CH-001/block/before-code",
+    "plan/technical-design/CH-001/block/proposed-code",
+    "plan/technical-design/CH-001/block/expected-result",
+    "plan/application-flows/F-001",
+    "plan/application-flows/F-001/diagram",
+    "plan/application-flows/F-001/change-point/A2",
+    "plan/tasks/T-001",
+    "plan/risks/R-001",
+    "plan/commit-groups/C-001",
+    "plan/manual-checks",
+    "plan/references/E-001",
+  ]) assert.ok(planSemantics.has(expected), `missing ${expected}`);
+  assert.ok([...planSemantics].some((semantic) => /^plan\/files\/file-[a-f0-9]{16}$/u.test(semantic)));
+
+  const databaseSemantics = semantics(databaseManifest);
+  assert.ok(databaseSemantics.has("plan/technical-design/CH-001/field/database-changes"));
+  assert.ok(databaseSemantics.has("plan/technical-design/CH-001/block/database-migration"));
+  assert.ok(databaseSemantics.has("plan/technical-design/CH-001/block/rollback-plan"));
+  assert.ok(semantics(manualManifest).has("plan/manual-checks/M-001"));
+});
+
+test("projects deterministic plain text for server-side selection validation", () => {
+  const manifest = parseReviewManifest(renderArtifact("plan", validPlan, { evidenceRegistry }).html);
+  const bySemantic = new Map(manifest.entries.map((entry) => [entry.semantic, entry]));
+
+  assert.equal(
+    bySemantic.get("plan/requirements/REQ-001").plainText,
+    "REQ-001\nReject timeout values outside the supported range.",
+  );
+  assert.match(
+    bySemantic.get("plan/technical-design/CH-001/block/proposed-code").plainText,
+    /^Proposed code\nexport function createSession\(timeout\)/u,
+  );
+  assert.match(
+    bySemantic.get("plan/application-flows/F-001/change-point/A2").plainText,
+    /File\nsrc\/session\.mjs\nSymbol\ncreateSession\nSurgical change\nInsert the bounds assertion/u,
+  );
+  assert.doesNotMatch(bySemantic.get("plan/requirements/REQ-001").plainText, /<[^>]+>/u);
+});
+
+test("escapes hostile source text and safely embeds it in the review manifest", () => {
+  const hostileText = "Make </script><script>alert('x')</script> & timeout handling bounded. D-001";
   const hostile = validPlan.replace(
     "Make timeout handling bounded and observable. D-001",
-    "Make <script>alert('x')</script> timeout handling bounded. D-001",
+    hostileText,
   ).replace("assertTimeoutInRange(timeout);", "<script>alert('code')</script>");
   const html = renderArtifact("plan", hostile, { evidenceRegistry }).html;
+  const manifest = parseReviewManifest(html);
+  const goal = manifest.entries.find((entry) => entry.semantic === "plan/goal");
+  const manifestSource = html.match(/<script type="application\/json" id="phasecraft-review-manifest">([\s\S]*?)<\/script>/u)?.[1];
+
   assert.doesNotMatch(html, /<script>/iu);
   assert.match(html, /&lt;script&gt;/u);
+  assert.equal(goal.plainText, hostileText);
+  assert.doesNotMatch(manifestSource, /<\/script|<script|&/iu);
+  assert.match(manifestSource, /\\u003c\/script\\u003e/u);
+  assert.equal(parseReviewManifest(renderArtifact("plan", hostile, { evidenceRegistry }).html).entries.length, manifest.entries.length);
 });
 
 test("renders roadmap and plan as distinct information products", () => {
@@ -177,7 +282,7 @@ test("resolves evidence identities to claims and provenance", () => {
 
 test("keeps rich requirement and reason copy in one grid child", () => {
   const html = renderArtifact("plan", richInlinePlan, { evidenceRegistry }).html;
-  assert.match(html, /<p class="brief-requirement"><span><span class="identity identity-req">REQ-001<\/span><\/span><span class="brief-requirement-copy">Reject <code>timeout<\/code> values/u);
+  assert.match(html, /<p class="brief-requirement"[^>]*><span><span class="identity identity-req">REQ-001<\/span><\/span><span class="brief-requirement-copy">Reject <code>timeout<\/code> values/u);
   assert.match(html, /<p class="reason"><strong>Why<\/strong><span class="reason-copy"><span class="identity identity-phase">P-01<\/span> and <span class="identity identity-phase">P-02<\/span>/u);
   assert.match(html, /\.brief-requirement-copy \{ min-width: 0; \}/u);
   assert.match(html, /\.reason-copy \{ min-width: 0; \}/u);

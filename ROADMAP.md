@@ -1,4 +1,4 @@
-# Phasecraft v0.1 Implementation Roadmap
+# Phasecraft Implementation Roadmap
 
 The roadmap tracks implementation of [the v0.1 specification](docs/SPEC.md). Detailed future planning is created just in time; this repository does not use Phasecraft to commit itself yet because Git initialization is intentionally deferred.
 
@@ -13,32 +13,40 @@ The roadmap tracks implementation of [the v0.1 specification](docs/SPEC.md). Det
 | P-05 | Package for OpenCode. | Nine commands, including recurring New Work, seven stage agents, shared skill, scoped permissions, and no hardcoded models exist. | completed |
 | P-06 | Build reusable installer. | Copy, link, check, update safety, modified-target preservation, and uninstall tests pass. | completed |
 | P-07 | Conformance and dogfooding. | Syntax check, full `node:test`, installer fixture, CLI Init-to-Ship fixture, and OpenCode resolved-config validation pass. | completed |
+| P-08 | Build local interactive artifact review. | Deterministic anchors, immutable feedback, authenticated loopback UI, planner resolutions, security tests, and installer coverage pass. | completed |
 
-## Current Phase: P-07
+## Current Phase: P-08
 
 ### Goal
 
-Confirm that repository documentation, runtime behavior, installed OpenCode assets, and safety tests describe one coherent v0.1 product.
+Deliver local interactive review without making browser state or generated HTML authoritative.
 
 ### Requirements
 
-- REQ-001: `npm run check` passes for every runtime and installer module.
-- REQ-002: `npm test` passes without network or third-party dependencies.
-- REQ-003: Installer copy and link outputs contain all command, agent, skill, and runtime files.
-- REQ-004: A temporary Git fixture completes Init, baseline adoption, patch snapshot, preview, and grouped local Ship without push.
-- REQ-005: Documentation matches implemented evidence identities, artifact paths, CLI flags, state names, and tracking modes.
+- REQ-001: Generated plan and roadmap HTML expose deterministic semantic review anchors and plain-text manifests.
+- REQ-002: Drafts persist privately and published feedback/resolutions are immutable and exact-hash-bound.
+- REQ-003: The review server is loopback-only, capability-protected, CSRF-protected, path-contained, and stale-safe.
+- REQ-004: The responsive shell supports semantic and same-anchor text-selection comments without browser automation.
+- REQ-005: Plan consumes only an explicit feedback batch, writes every disposition, regenerates HTML, and reopens review.
+- REQ-006: Syntax, unit, workflow, installer, lifecycle, and security tests pass.
 
 ### Risks
 
-- Documentation drift could teach behavior the runtime rejects. Mitigation: schema examples are copied into tests and reviewed against exported validators.
-- Git hooks can mutate content after approval. Mitigation: Ship checks staged sets, remaining file hashes, and post-commit drift, then stops after any hook mutation.
-- OpenCode loads configuration only at startup. Mitigation: installer output always reports that restart is required.
+- A same-origin remote Mermaid script could access the authenticated review API. Mitigation: review-mode artifact CSP blocks every artifact script and preserves Mermaid source.
+- Browser comments could drift onto changed content. Mitigation: exact source/HTML hashes and unique quote/context validation reject stale publication.
+- Feedback could be mistaken for evidence or command authority. Mitigation: immutable projections label it untrusted, and Plan independently verifies technical claims.
 
 ### Exit
 
-P-07 completed with syntax, unit, integration, installer, temporary Git workflow, and OpenCode package-loading checks passing.
+P-08 completed with deterministic rendering, immutable feedback, authenticated review, planner integration, installer checks, and the full test suite passing.
 
-## Deferred Beyond v0.1
+## Delivered After v0.1
+
+- Local authenticated plan/roadmap review with element and selected-text comments.
+- Immutable exact-hash-bound feedback batches and planner resolutions.
+- Differential risk-aware plan re-verification.
+
+## Deferred
 
 - Push and pull-request creation.
 - Issue-tracker APIs.
@@ -46,4 +54,4 @@ P-07 completed with syntax, unit, integration, installer, temporary Git workflow
 - Native Windows outside WSL.
 - Hunk-based separation of pre-existing edits.
 - Automatic secret redaction.
-- A browser application or remote dashboard.
+- Remote hosted collaboration or dashboard.

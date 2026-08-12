@@ -113,6 +113,12 @@ function help() {
       "verification-result": "Record verification outcome and pending manual checks",
       "handoff-list": "List durable agent handoffs for a work item",
       "handoff-write": "Atomically write the next immutable agent handoff",
+      "review-start": "Start the authenticated local artifact review UI",
+      "review-status": "Show the local artifact review server status",
+      "review-stop": "Stop the local artifact review server",
+      "feedback-list": "List published feedback batches",
+      "feedback-show": "Show one immutable feedback batch",
+      "feedback-resolve": "Write one immutable planner feedback resolution",
     },
   };
 }
@@ -243,6 +249,75 @@ async function run(argv) {
       data,
     ));
     return { work: resolved.record.id, artifactRoot: resolved.state.artifactRoot, handoff };
+  }
+
+  if (["review-start", "review-status", "review-stop"].includes(command)) {
+    const root = await projectRoot(flags);
+    const resolved = await resolveWork(root, {
+      id: typeof flags.work === "string" ? flags.work : positional[0],
+      branch: typeof flags.branch === "string" ? flags.branch : null,
+    });
+    const { startReview, reviewStatus, stopReview } = await import("./review.mjs");
+    if (command === "review-status") return reviewStatus(resolved.state, { work: resolved.record.id });
+    if (command === "review-stop") return stopReview(resolved.state, { work: resolved.record.id });
+    return withWorkLock(root, resolved.record.key, () => startReview(resolved.state, {
+      work: resolved.record.id,
+      artifact: typeof flags.artifact === "string" ? flags.artifact : "plan",
+      noOpen: flags["no-open"] === true,
+      detached: true,
+    }));
+  }
+
+  if (["feedback-list", "feedback-show", "feedback-resolve"].includes(command)) {
+    const root = await projectRoot(flags);
+    const resolved = await resolveWork(root, {
+      id: typeof flags.work === "string" ? flags.work : null,
+      branch: typeof flags.branch === "string" ? flags.branch : null,
+    });
+    const { listFeedback, showFeedback, writeFeedbackResolution } = await import("./feedback.mjs");
+    if (command === "feedback-list") return { work: resolved.record.id, feedback: await listFeedback(resolved.state) };
+    const feedback = required(flags, "feedback");
+    if (command === "feedback-show") {
+      const shown = await showFeedback(resolved.state, feedback, { recoverProjection: flags.recover === true });
+      return { work: resolved.record.id, ...shown };
+    }
+    const data = await jsonFromFlagOrFile(flags, "data", null);
+    const shown = await showFeedback(resolved.state, feedback, { recoverProjection: true });
+    const { discoverReviewArtifacts } = await import("./review.mjs");
+    const { parseReviewManifest } = await import("./render.mjs");
+    const artifacts = await discoverReviewArtifacts(resolved.state);
+    const original = artifacts.find((artifact) => artifact.path === shown.batch.artifact.path
+      && artifact.sourcePath === shown.batch.artifact.sourcePath
+      && artifact.sourceHash === shown.batch.artifact.sourceHash
+      && artifact.htmlHash === shown.batch.artifact.htmlHash);
+    if (!original) {
+      const error = new Error("Feedback source is not available as a current or archived exact artifact");
+      error.code = "FEEDBACK_SOURCE_BINDING_UNKNOWN";
+      throw error;
+    }
+    const resultArtifact = artifacts.find((artifact) => artifact.kind === shown.batch.artifact.kind
+      && artifact.phase === shown.batch.artifact.phase
+      && artifact.sourceHash === data?.resultSourceHash
+      && artifact.htmlHash === data?.resultHtmlHash);
+    if (!resultArtifact) {
+      const error = new Error("Feedback resolution result hashes do not match a current or archived generated artifact");
+      error.code = "FEEDBACK_RESULT_BINDING_UNKNOWN";
+      throw error;
+    }
+    const resultingAnchors = new Set(parseReviewManifest(resultArtifact.snapshot.toString("utf8")).entries.map((entry) => entry.semantic));
+    const unknownAnchors = (data?.comments ?? [])
+      .flatMap((comment) => comment.resultingAnchors ?? [])
+      .filter((anchor) => !resultingAnchors.has(anchor));
+    if (unknownAnchors.length > 0) {
+      const error = new Error(`Feedback resolution references unknown resulting anchors: ${[...new Set(unknownAnchors)].join(", ")}`);
+      error.code = "FEEDBACK_RESULT_ANCHOR_UNKNOWN";
+      throw error;
+    }
+    return { work: resolved.record.id, ...await withWorkLock(
+      root,
+      resolved.record.key,
+      () => writeFeedbackResolution(resolved.state, feedback, data),
+    ) };
   }
 
   if (["baseline", "baseline-clean", "adopt", "snapshot", "ship-preview", "ship"].includes(command)) {

@@ -59,6 +59,12 @@ Plan checks authority drift, maintains the full roadmap, and details only the ne
 
 Plan validates restricted Markdown and generates `roadmap.html` and `plan.html` in both artifact modes. The two derivatives are intentionally different: the roadmap visibly declares whole-work/all-phase strategic scope, while each phase-directory plan visibly declares one current executable phase and labels flows owned by other phases as future context that it does not authorize. The plan remains an implementation review cockpit for server-side syntax-highlighted before/proposed code and expected results, Mermaid BEFORE/AFTER application-flow comparisons, surgical change tables, database/API/flow impact panels, migration and rollback detail, requirement coverage, task order, file impact, risks, row-based manual checks, and commit groups. Browser titles and machine metadata carry artifact scope and executable phase. Evidence identities link to registry-backed claim, provenance, and status cards. Native task dependency diagrams are generated only when multiple nodes or declared dependencies make them informative. Application diagrams load a pinned Mermaid browser renderer with strict security and preserve source fallback. Planner and auditor agents validate the Markdown and deterministic HTML structure without Playwright or browser automation; visual review is a human feedback loop, not an approval gate.
 
+Every generated artifact also carries deterministic semantic review anchors and an inert ordered plain-text manifest. After successful Plan, `review-start` starts a dependency-free HTTP server on an OS-assigned `127.0.0.1` port, attempts to open the active plan, and returns the URL when launch is disabled or fails. A high-entropy fragment capability is exchanged for an HttpOnly SameSite cookie; mutation requests require exact Host/Origin, JSON, and CSRF. The byte-exact artifact is served in a same-origin iframe with artifact scripts blocked. This intentionally disables Mermaid rendering in authenticated review mode while retaining readable source and prevents remote Mermaid code from accessing the review API.
+
+The shell supports element comments and unambiguous text selections contained in one semantic anchor. Private drafts live under `.phasecraft/.local`, survive browser/server restarts, and are never authoritative workflow state. Publishing validates current source/HTML hashes and writes immutable private `FB-NNN.json` plus complete reviewable `feedback/FB-NNN.md`; it does not launch an agent or transition state. The UI returns `/phasecraft-plan --work <id> --feedback FB-NNN`.
+
+Plan consumes only the explicitly named batch, treats feedback as untrusted input, verifies technical claims independently, and records one `applied`, `declined`, `deferred`, `needs-clarification`, or `obsolete` disposition per comment. `feedback-resolve` writes immutable private and reviewable resolution records with old/result hashes and resulting semantic anchors. The original batch is unchanged. Plan regenerates and reopens the active artifact for another human review round.
+
 ### Verify Plan
 
 The plan auditor runs in an independent OpenCode subtask. It validates:
@@ -110,7 +116,7 @@ One user approval authorizes that exact fingerprint. `verified_pending` requires
 
 ### Status
 
-Status does not change semantic artifacts or runtime state. It reports the work state and revision, active plan version, authority drift, unknowns, pending checks, adoption, latest per-agent handoffs, missing handoff gaps, and the next legal stage, then records its own immutable manager navigation handoff.
+Status does not change semantic artifacts or runtime state. It reports the work state and revision, active plan version, authority drift, unknowns, pending feedback/resolutions and clarification requests, local review availability, pending checks, adoption, latest per-agent handoffs, missing handoff gaps, and the next legal stage, then records its own immutable manager navigation handoff.
 
 ## Durable Handoffs
 
@@ -184,4 +190,4 @@ Manager, researcher, planner, auditor, and verifier may write workflow artifacts
 
 ## Conformance
 
-Phasecraft v0.1 is conformant when syntax checks and the `node:test` suite pass, the installer can copy/link/check/uninstall safely, the OpenCode package contains all nine commands and seven stage agents, and the CLI fixture completes baseline capture through local grouped commits without push.
+Phasecraft is conformant when syntax checks and the `node:test` suite pass, the installer can copy/link/check/uninstall safely, the OpenCode package contains all nine workflow commands and seven stage agents, review/feedback commands pass security and lifecycle fixtures, and the CLI fixture completes baseline capture through local grouped commits without push.

@@ -23,6 +23,9 @@ test("copies, checks, updates, and cleanly uninstalls managed files", async (t) 
   const installed = await installPhasecraft({ sourceRoot, targetRoot: root, mode: "copy" });
   assert.equal(installed.mode, "copy");
   assert.ok(installed.files > 10);
+  for (const runtime of ["feedback.mjs", "review.mjs", "review-ui.mjs"]) {
+    assert.equal((await lstat(path.join(root, ".opencode", "phasecraft", "runtime", runtime))).isFile(), true);
+  }
   assert.equal((await checkPhasecraft({ sourceRoot, targetRoot: root })).healthy, true);
 
   const updated = await installPhasecraft({ sourceRoot, targetRoot: root, mode: "copy" });

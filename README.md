@@ -7,7 +7,7 @@
     independent checks, and exact local commits.
   </p>
   <p>
-    <img alt="Version 0.2.0" src="https://img.shields.io/badge/version-0.2.0-6366f1?style=flat-square">
+    <img alt="Version 0.3.0" src="https://img.shields.io/badge/version-0.3.0-6366f1?style=flat-square">
     <img alt="Node.js 20 or newer" src="https://img.shields.io/badge/Node.js-%E2%89%A520-339933?style=flat-square&logo=nodedotjs&logoColor=white">
     <img alt="Mermaid diagrams" src="https://img.shields.io/badge/diagrams-Mermaid-22d3ee?style=flat-square">
     <img alt="OpenCode workflow" src="https://img.shields.io/badge/OpenCode-workflow-111827?style=flat-square">
@@ -133,7 +133,7 @@ flowchart LR
 | `/phasecraft-init` | Configure Phasecraft once and create the first work item. |
 | `/phasecraft-new-work` | Create each later feature or task with a fresh baseline. |
 | `/phasecraft-discuss` | Establish scope, decisions, evidence, risks, proposals, and unknowns. |
-| `/phasecraft-plan` | Maintain the roadmap and detail only the next executable phase. |
+| `/phasecraft-plan` | Maintain the roadmap, detail the next executable phase, and process an explicit `--feedback FB-NNN` batch. |
 | `/phasecraft-verify-plan` | Independently audit the plan, then ask you to fix, defer, accept, or mark each semantic finding non-blocking. |
 | `/phasecraft-execute` | Execute the entire approved phase without committing. |
 | `/phasecraft-verify` | Independently compare decisions, plan, implementation, and checks. |
@@ -141,6 +141,8 @@ flowchart LR
 | `/phasecraft-status` | Report state, drift, blockers, pending checks, and the next legal command. |
 
 Pass `--work <id>` when several work items are open. If omitted, Phasecraft resolves by branch association or the sole open item; ambiguity requires user selection.
+
+After Plan validates and renders the active phase, it starts a capability-protected review UI on `127.0.0.1` and opens the default browser. Use `PHASECRAFT_NO_BROWSER=1` in headless environments; Phasecraft still returns the local URL. Enable Comment mode to annotate requirement, change, flow, task, risk, code/result, table, or evidence anchors, or select text inside one anchor. Drafts are private and survive server restarts. Publishing creates immutable `FB-NNN` artifacts and copies an explicit planner command; it never launches an agent automatically.
 
 ## 🧩 Evidence Model
 
@@ -182,12 +184,16 @@ Reviewable artifacts and private runtime state remain separated:
 │   │   └── EVIDENCE.json
 │   ├── plan/
 │   │   ├── DEFERRED-FINDINGS.md
+│   │   ├── RISK-REGISTER.md
 │   │   ├── ROADMAP.md
 │   │   ├── roadmap.html
 │   │   └── phases/P-01-<slug>/
 │   │       ├── PLAN.md
 │   │       ├── plan.html
 │   │       └── PLAN-VERIFICATION.md
+│   ├── feedback/
+│   │   ├── FB-001.md
+│   │   └── FB-001-RESOLUTION.md
 │   ├── verification/
 │   └── ship/SHIP.md
 └── .local/
@@ -197,6 +203,10 @@ Reviewable artifacts and private runtime state remain separated:
         ├── state.json
         ├── BASELINE.json
         ├── execution/phases/P-01/patches/
+        ├── reviews/
+        │   ├── sessions/current.json
+        │   ├── drafts/
+        │   └── batches/
         └── ship/
 ```
 
@@ -205,7 +215,7 @@ Reviewable artifacts and private runtime state remain separated:
 | `local` | Adds `/.phasecraft/` to the repository-local `.git/info/exclude`. |
 | `reviewable` | Excludes only `/.phasecraft/.local/`; decisions, evidence, plans, and verification can be reviewed or committed manually. |
 
-Markdown is authoritative. `roadmap.html` is a strategic phase atlas, while `plan.html` is an implementation review cockpit for syntax-highlighted before/proposed code and concrete expected results, Mermaid BEFORE/AFTER application-flow comparisons, surgical node-to-file/symbol mappings, database/API/flow impact, migration and rollback detail, requirement coverage, task flow, file impact, risks, row-based manual checks, and commits. The roadmap visibly declares whole-work/all-phase scope. Every plan visibly declares its current executable `P-NN`, states that it authorizes only that phase, and labels other phase-owned flows as future context. Phase plans retain canonical filenames but live in separate `P-NN-<slug>/` directories, so later plans never overwrite earlier ones. Evidence identities link to reference cards with their claim, provenance, and status. Both views are escaped and bound to their Markdown SHA-256. Plans with application flows load pinned Mermaid `11.4.1` from jsDelivr and preserve readable diagram source as fallback.
+Markdown is authoritative. `roadmap.html` is a strategic phase atlas, while `plan.html` is an implementation review cockpit for syntax-highlighted before/proposed code and concrete expected results, Mermaid BEFORE/AFTER application-flow comparisons, surgical node-to-file/symbol mappings, database/API/flow impact, migration and rollback detail, requirement coverage, task flow, file impact, risks, row-based manual checks, and commits. The roadmap visibly declares whole-work/all-phase scope. Every plan visibly declares its current executable `P-NN`, states that it authorizes only that phase, and labels other phase-owned flows as future context. Phase plans retain canonical filenames but live in separate `P-NN-<slug>/` directories, so later plans never overwrite earlier ones. Evidence identities link to reference cards with their claim, provenance, and status. Both views are escaped, bound to their Markdown SHA-256, and carry deterministic semantic review anchors. Standalone plans may load pinned Mermaid `11.4.1`; authenticated review mode blocks all artifact scripts and preserves readable Mermaid source so third-party code cannot access the local review origin.
 
 Every Phasecraft agent invocation also writes an immutable, atomically sequenced `handoffs/<agent>/H-NNN.md`. Handoffs preserve exact navigation and resume context across repeated agent rounds, but never replace evidence, plans, state, execution records, or verification artifacts.
 
@@ -246,8 +256,10 @@ Models are inherited from the target project's OpenCode configuration. Phasecraf
 | Artifacts | `runtime/artifacts.mjs` | Evidence, roadmap, and restricted plan validation |
 | Handoffs | `runtime/handoffs.mjs` | Validated immutable agent handoff allocation and discovery |
 | Renderer | `runtime/render.mjs` | Safe deterministic plan and roadmap HTML |
+| Feedback | `runtime/feedback.mjs` | Private drafts, immutable feedback batches, and planner resolutions |
+| Review | `runtime/review.mjs`, `runtime/review-ui.mjs` | Authenticated loopback server and responsive annotation shell |
 | Git | `runtime/git.mjs` | Baselines, patches, groups, previews, and local Ship |
-| OpenCode package | `opencode/` | Nine commands, seven scoped agents, and the shared skill |
+| OpenCode package | `opencode/` | Nine workflow commands, seven scoped agents, the shared skill, and review runtime commands |
 | Installer | `bin/install.mjs` | Conflict-safe copy, link, check, update, and uninstall |
 
 The installed runtime lives at `.opencode/phasecraft/runtime/phasecraft.mjs`. Inspect its machine-facing commands with:

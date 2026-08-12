@@ -34,6 +34,9 @@ Version 1 artifacts use JSON for machine state and restricted Markdown for revie
 │       │           ├── plan.html
 │       │           ├── PLAN-VERIFICATION.md
 │       │           └── SUPERSEDED.json
+│       ├── feedback/
+│       │   ├── FB-001.md
+│       │   └── FB-001-RESOLUTION.md
 │       ├── verification/phases/P-01-<slug>/VERIFICATION.md
 │       └── ship/SHIP.md
 └── .local/
@@ -43,6 +46,12 @@ Version 1 artifacts use JSON for machine state and restricted Markdown for revie
         ├── state.json
         ├── BASELINE.json
         ├── execution/phases/P-01/patches/T-001.patch
+        ├── reviews/
+        │   ├── sessions/current.json
+        │   ├── drafts/<artifact-key>/<source-hash>/FC-001.json
+        │   └── batches/
+        │       ├── FB-001.json
+        │       └── FB-001-RESOLUTION.json
         └── ship/
             ├── preview.json
             └── result.json
@@ -405,6 +414,16 @@ The head includes:
 ```
 
 `phasecraft-executable-phase` appears only on plans and is derived from the phase directory or plan title. Plan browser titles start with `P-NN`; roadmap titles start with `All Phases`. Generation includes no timestamp or random identifier. The same Markdown, phase identity, and evidence registry produce byte-identical output. HTML is never authoritative.
+
+Every practical review unit has a unique `data-phasecraft-anchor` and human-readable `data-phasecraft-anchor-label`. Generated HTML includes an inert `<script type="application/json" id="phasecraft-review-manifest">` whose ordered entries contain `semantic`, `label`, and deterministic `plainText`. The manifest contains no session, reviewer, feedback, timestamp, or random data. Semantic paths use safe segments such as `plan/requirements/REQ-001`; arbitrary file names are represented by deterministic hash-based segments while the readable file path remains in the label and text.
+
+## Interactive Feedback
+
+Private mutable drafts are exact-bound JSON under `reviews/drafts/`. Each stores schema version, `FC-NNN` identity, work, artifact kind/path/source path/source and HTML SHA-256, semantic anchor, optional exact quote/prefix/suffix/start/end selection, Markdown body, timestamps, warnings, and `draft` status. Raw HTML is rejected; likely credentials require explicit publication confirmation.
+
+Published private batches are immutable mode-`0600` `reviews/batches/FB-NNN.json`. Their complete deterministic reviewable projections are immutable mode-`0444` `feedback/FB-NNN.md`. Each batch records one artifact, exact source/HTML hashes, publication time, and submitted comments. A changed source or HTML hash rejects publication. Projection loss can be recovered byte-for-byte from private JSON; projection mismatch is treated as tampering.
+
+Planner resolutions are immutable private `FB-NNN-RESOLUTION.json` and reviewable `feedback/FB-NNN-RESOLUTION.md`. They bind the original canonical batch hash, old source/HTML hashes, resulting source/HTML hashes, and exactly one disposition per comment: `applied`, `declined`, `deferred`, `needs-clarification`, or `obsolete`. Applied comments require resulting semantic anchors. A resolution never edits or replaces the original feedback.
 
 ## Plan Versions
 

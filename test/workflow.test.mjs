@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -188,4 +188,96 @@ test("baseline-clean requires a dirty file to be restored before planning edits"
     "baseline-clean", "--root", root, "--work", "CLEAN-1", "--files", '["shared.txt"]',
   ]);
   assert.deepEqual(cleaned.cleanedBaselineFiles, ["shared.txt"]);
+});
+
+test("CLI starts local review and lists, shows, and resolves feedback", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "phasecraft-review-cli-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await runGit(root, ["init", "-q"]);
+  await runGit(root, ["config", "user.name", "Phasecraft Test"]);
+  await runGit(root, ["config", "user.email", "phasecraft@example.test"]);
+  await runGit(root, ["commit", "--allow-empty", "-qm", "initial"]);
+  await run(["init-project", "--root", root, "--template", "tasks/{id}-{slug}", "--artifact-mode", "reviewable"]);
+  const created = await run(["init-work", "--root", root, "--id", "REVIEW-1", "--title", "Review plan", "--values", "{}"]);
+  const phase = path.join(created.state.artifactRoot, "plan", "phases", "P-01-review");
+  await mkdir(phase, { recursive: true });
+  const source = "# Review plan\n";
+  const { sha256, publishFeedback } = await import("../runtime/feedback.mjs");
+  const html = `<!doctype html><html><head><meta name="phasecraft-source-sha256" content="${sha256(source)}"></head><body><p data-phasecraft-anchor="plan/goal">Review goal</p><script type="application/json" id="phasecraft-review-manifest">{"schemaVersion":1,"entries":[{"semantic":"plan/goal","label":"Goal","plainText":"Review goal"}]}</script></body></html>\n`;
+  await writeFile(path.join(phase, "PLAN.md"), source);
+  await writeFile(path.join(phase, "plan.html"), html);
+  const started = await run(["review-start", "--root", root, "--work", "REVIEW-1", "--artifact", "plan", "--no-open"]);
+  assert.equal(started.opened, false);
+  assert.match(started.url, /^http:\/\/127\.0\.0\.1:\d+\/#/u);
+  assert.equal((await run(["review-status", "--root", root, "--work", "REVIEW-1"])).running, true);
+  t.after(() => run(["review-stop", "--root", root, "--work", "REVIEW-1"]).catch(() => {}));
+
+  const artifact = {
+    kind: "plan",
+    path: "plan/phases/P-01-review/plan.html",
+    sourcePath: "plan/phases/P-01-review/PLAN.md",
+    sourceHash: sha256(source),
+    htmlHash: sha256(html),
+    phase: "P-01",
+  };
+  await publishFeedback(created.state, {
+    artifact,
+    comments: [{ id: "FC-001", anchor: { semantic: "plan/goal" }, bodyMarkdown: "Clarify the goal.", createdAt: "2026-08-12T10:11:12.000Z" }],
+  }, { now: "2026-08-12T10:11:12.000Z" });
+  const listed = await run(["feedback-list", "--root", root, "--work", "REVIEW-1"]);
+  assert.deepEqual(listed.feedback.map(({ id }) => id), ["FB-001"]);
+  const shown = await run(["feedback-show", "--root", root, "--work", "REVIEW-1", "--feedback", "FB-001"]);
+  assert.equal(shown.batch.comments[0].bodyMarkdown, "Clarify the goal.");
+  const resultSourceHash = sha256(source);
+  const resolutionFile = path.join(root, "resolution.json");
+  await writeFile(resolutionFile, JSON.stringify({
+    resultSourceHash,
+    resultHtmlHash: sha256(html),
+    comments: [{ id: "FC-001", disposition: "applied", rationaleMarkdown: "Clarified the goal.", resultingAnchors: ["plan/goal"] }],
+  }));
+  const resolved = await run(["feedback-resolve", "--root", root, "--work", "REVIEW-1", "--feedback", "FB-001", "--data-file", resolutionFile]);
+  assert.equal(resolved.resolution.resultSourceHash, resultSourceHash);
+  assert.match(await readFile(path.join(created.state.artifactRoot, "feedback", "FB-001-RESOLUTION.md"), "utf8"), /FC-001: applied/u);
+});
+
+test("CLI rejects feedback resolutions not bound to generated result artifacts", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "phasecraft-feedback-binding-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await runGit(root, ["init", "-q"]);
+  await runGit(root, ["config", "user.name", "Phasecraft Test"]);
+  await runGit(root, ["config", "user.email", "phasecraft@example.test"]);
+  await runGit(root, ["commit", "--allow-empty", "-qm", "initial"]);
+  await run(["init-project", "--root", root, "--template", "tasks/{id}-{slug}", "--artifact-mode", "reviewable"]);
+  const created = await run(["init-work", "--root", root, "--id", "BIND-1", "--title", "Bind feedback", "--values", "{}"]);
+  const phase = path.join(created.state.artifactRoot, "plan", "phases", "P-01-bind");
+  await mkdir(phase, { recursive: true });
+  const { sha256, publishFeedback } = await import("../runtime/feedback.mjs");
+  const source = "# Bound plan\n";
+  const html = `<!doctype html><html><head><meta name="phasecraft-source-sha256" content="${sha256(source)}"></head><body><p data-phasecraft-anchor="plan/goal">Goal</p><script type="application/json" id="phasecraft-review-manifest">{"schemaVersion":1,"entries":[{"semantic":"plan/goal","label":"Goal","plainText":"Goal"}]}</script></body></html>\n`;
+  await writeFile(path.join(phase, "PLAN.md"), source);
+  await writeFile(path.join(phase, "plan.html"), html);
+  await publishFeedback(created.state, {
+    artifact: { kind: "plan", path: "plan/phases/P-01-bind/plan.html", sourcePath: "plan/phases/P-01-bind/PLAN.md", sourceHash: sha256(source), htmlHash: sha256(html), phase: "P-01" },
+    comments: [{ id: "FC-001", anchor: { semantic: "plan/goal" }, bodyMarkdown: "Clarify.", createdAt: "2026-08-12T10:11:12.000Z" }],
+  }, { now: "2026-08-12T10:11:12.000Z" });
+  const unknownResult = path.join(root, "unknown-result.json");
+  await writeFile(unknownResult, JSON.stringify({
+    resultSourceHash: "a".repeat(64),
+    resultHtmlHash: "b".repeat(64),
+    comments: [{ id: "FC-001", disposition: "applied", rationaleMarkdown: "Changed.", resultingAnchors: ["plan/goal"] }],
+  }));
+  await assert.rejects(
+    run(["feedback-resolve", "--root", root, "--work", "BIND-1", "--feedback", "FB-001", "--data-file", unknownResult]),
+    { code: "FEEDBACK_RESULT_BINDING_UNKNOWN" },
+  );
+  const unknownAnchor = path.join(root, "unknown-anchor.json");
+  await writeFile(unknownAnchor, JSON.stringify({
+    resultSourceHash: sha256(source),
+    resultHtmlHash: sha256(html),
+    comments: [{ id: "FC-001", disposition: "applied", rationaleMarkdown: "Changed.", resultingAnchors: ["plan/tasks/T-999"] }],
+  }));
+  await assert.rejects(
+    run(["feedback-resolve", "--root", root, "--work", "BIND-1", "--feedback", "FB-001", "--data-file", unknownAnchor]),
+    { code: "FEEDBACK_RESULT_ANCHOR_UNKNOWN" },
+  );
 });

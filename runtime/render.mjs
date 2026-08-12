@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -52,6 +52,97 @@ function renderContent(content) {
   }
   if (listOpen) output.push("</ul>");
   return output.join("\n");
+}
+
+function plainInline(value) {
+  return String(value ?? "").replace(/`([^`]+)`/gu, "$1");
+}
+
+function plainContent(content) {
+  return (content ?? [])
+    .map(({ text }) => text.trim().replace(/^-\s+/u, ""))
+    .filter(Boolean)
+    .map(plainInline)
+    .join("\n");
+}
+
+function joinPlainText(...parts) {
+  return parts
+    .flat(Infinity)
+    .map((part) => String(part ?? "").trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function semanticKey(value) {
+  return createHash("sha256").update(String(value)).digest("hex").slice(0, 16);
+}
+
+function entryPlainText(entry, fields = [], blocks = []) {
+  return joinPlainText(
+    entry.heading,
+    fields.map((field) => {
+      const value = getField(entry, field);
+      return value ? `${field}\n${plainInline(value)}` : "";
+    }),
+    blocks.map((block) => block?.text ? `${block.title}\n${block.text}` : ""),
+  );
+}
+
+class ReviewManifestBuilder {
+  constructor() {
+    this.entries = [];
+    this.counts = new Map();
+  }
+
+  anchor(semantic, label, plainText) {
+    const count = (this.counts.get(semantic) ?? 0) + 1;
+    this.counts.set(semantic, count);
+    const uniqueSemantic = count === 1 ? semantic : `${semantic}/occurrence-${count}`;
+    const entry = {
+      semantic: uniqueSemantic,
+      label: String(label),
+      plainText: String(plainText ?? ""),
+    };
+    this.entries.push(entry);
+    return ` data-phasecraft-anchor="${escapeHtml(uniqueSemantic)}" data-phasecraft-anchor-label="${escapeHtml(entry.label)}"`;
+  }
+
+  toJSON(html = "") {
+    const entries = html
+      ? [...this.entries].sort((left, right) => {
+        const leftIndex = html.indexOf(`data-phasecraft-anchor="${escapeHtml(left.semantic)}"`);
+        const rightIndex = html.indexOf(`data-phasecraft-anchor="${escapeHtml(right.semantic)}"`);
+        return leftIndex - rightIndex;
+      })
+      : this.entries;
+    return { schemaVersion: 1, entries };
+  }
+}
+
+function escapeJsonForHtml(value) {
+  return JSON.stringify(value)
+    .replaceAll("&", "\\u0026")
+    .replaceAll("<", "\\u003c")
+    .replaceAll(">", "\\u003e")
+    .replaceAll("\u2028", "\\u2028")
+    .replaceAll("\u2029", "\\u2029");
+}
+
+export function parseReviewManifest(html) {
+  const match = String(html).match(/<script\b(?=[^>]*\bid=["']phasecraft-review-manifest["'])[^>]*>([\s\S]*?)<\/script>/iu);
+  if (!match) {
+    const error = new Error("Phasecraft review manifest was not found in generated HTML");
+    error.code = "REVIEW_MANIFEST_MISSING";
+    throw error;
+  }
+  try {
+    return JSON.parse(match[1]);
+  } catch (cause) {
+    const error = new Error("Phasecraft review manifest contains invalid JSON", { cause });
+    error.code = "REVIEW_MANIFEST_INVALID";
+    throw error;
+  }
 }
 
 function getSection(document, name) {
@@ -167,27 +258,45 @@ function highlightCode(value, language) {
   return output + escapeHtml(String(value).slice(cursor));
 }
 
-function renderTechnicalBlock(block, label) {
+function renderTechnicalBlock(block, label, manifest, semantic, anchorLabel = label) {
+  const plainText = block?.text ? joinPlainText(label, block.text) : joinPlainText(label, "Not supplied in PLAN.md");
+  const anchor = manifest.anchor(semantic, anchorLabel, plainText);
   if (!block?.text) {
-    return `<div class="missing-detail"><strong>${escapeHtml(label)}</strong><span>Not supplied in PLAN.md</span></div>`;
+    return `<div class="missing-detail"${anchor}><strong>${escapeHtml(label)}</strong><span>Not supplied in PLAN.md</span></div>`;
   }
   const language = block.language || "text";
-  return `<div class="code-panel"><div class="code-panel-heading"><strong>${escapeHtml(label)}</strong><span>${escapeHtml(language)}</span></div><pre><code class="language-${escapeHtml(language.toLowerCase())}">${highlightCode(block.text, language)}</code></pre></div>`;
+  return `<div class="code-panel"${anchor}><div class="code-panel-heading"><strong>${escapeHtml(label)}</strong><span>${escapeHtml(language)}</span></div><pre><code class="language-${escapeHtml(language.toLowerCase())}">${highlightCode(block.text, language)}</code></pre></div>`;
 }
 
-function renderApplicationFlow(entry, currentPhase) {
+function renderApplicationFlow(entry, currentPhase, manifest) {
   const blocks = parseEntryDetailBlocks(entry);
   const diagram = blocks.get("diagram");
   const changePoints = parseChangePoints(blocks.get("change points")).points;
-  const pointRows = changePoints.map((point) => `<tr><th><code>${escapeHtml(point.node)}</code></th><td>${renderInline(point.phase)}</td><td><code>${renderInline(point.file)}</code><small>${renderInline(point.symbol)}</small></td><td>${renderInline(point.change)}</td></tr>`).join("\n");
+  const id = entryId(entry);
+  const semantic = `plan/application-flows/${id}`;
+  const label = `${id}: ${entryTitle(entry)}`;
+  const pointRows = changePoints.map((point) => {
+    const pointSemantic = `${semantic}/change-point/${point.node}`;
+    const pointLabel = `${label} — Change point ${point.node}`;
+    const pointText = joinPlainText(
+      `Change point ${point.node}`,
+      `Phase\n${point.phase}`,
+      `File\n${point.file}`,
+      `Symbol\n${point.symbol}`,
+      `Surgical change\n${plainInline(point.change)}`,
+    );
+    return `<tr${manifest.anchor(pointSemantic, pointLabel, pointText)}><th><code>${escapeHtml(point.node)}</code></th><td>${renderInline(point.phase)}</td><td><code>${renderInline(point.file)}</code><small>${renderInline(point.symbol)}</small></td><td>${renderInline(point.change)}</td></tr>`;
+  }).join("\n");
   const ownerPhase = phaseId(getField(entry, "Phase"));
   const phaseScope = currentPhase && ownerPhase !== currentPhase ? "future" : "current";
   const phaseLabel = phaseScope === "current" ? "Current phase" : "Future context";
-  return `<article class="application-flow-card application-flow-${phaseScope}" data-application-flow="${escapeHtml(entryId(entry))}" data-phase-scope="${phaseScope}">
-    <div class="application-flow-header"><div><span>${renderInline(entryId(entry))}</span><h3>${renderInline(entryTitle(entry))}</h3></div><em class="flow-phase flow-phase-${phaseScope}">${renderInline(getField(entry, "Phase"))}<span>${phaseLabel}</span></em></div>
+  const flowText = entryPlainText(entry, ["Surface", "Entry point", "Phase", "Before", "After", "Evidence"]);
+  const diagramText = joinPlainText("Diagram", diagram?.text ?? "");
+  return `<article class="application-flow-card application-flow-${phaseScope}" data-application-flow="${escapeHtml(id)}" data-phase-scope="${phaseScope}"${manifest.anchor(semantic, label, flowText)}>
+    <div class="application-flow-header"><div><span>${renderInline(id)}</span><h3>${renderInline(entryTitle(entry))}</h3></div><em class="flow-phase flow-phase-${phaseScope}">${renderInline(getField(entry, "Phase"))}<span>${phaseLabel}</span></em></div>
     <div class="application-flow-meta"><div><small>Surface</small><strong>${renderInline(getField(entry, "Surface"))}</strong></div><div><small>Entry point</small><code>${renderInline(getField(entry, "Entry point"))}</code></div></div>
     <div class="application-flow-delta"><div><small>Before</small><p>${renderInline(getField(entry, "Before"))}</p></div><div><small>After</small><p>${renderInline(getField(entry, "After"))}</p></div></div>
-    <div class="mermaid-shell"><pre class="mermaid">${escapeHtml(diagram?.text ?? "")}</pre></div>
+    <div class="mermaid-shell"${manifest.anchor(`${semantic}/diagram`, `${label} — Diagram`, diagramText)}><pre class="mermaid">${escapeHtml(diagram?.text ?? "")}</pre></div>
     <div class="change-point-shell"><div class="change-point-heading"><strong>Surgical application changes</strong><span>${changePoints.length} mapped points</span></div><div class="table-shell"><table class="change-point-table"><thead><tr><th>Flow node</th><th>Phase</th><th>File / symbol</th><th>Surgical change</th></tr></thead><tbody>${pointRows}</tbody></table></div></div>
     <div class="application-flow-evidence"><small>Evidence</small>${renderChips(splitList(getField(entry, "Evidence")))}</div>
   </article>`;
@@ -295,7 +404,7 @@ function metric(label, value, detail = "") {
   return `<div class="metric"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span>${detail ? `<small>${escapeHtml(detail)}</small>` : ""}</div>`;
 }
 
-function renderReferenceIndex(validation, evidenceRegistry, kind) {
+function renderReferenceIndex(validation, evidenceRegistry, kind, manifest) {
   const entriesById = new Map((evidenceRegistry?.entries ?? []).map((entry) => [entry.id, entry]));
   const references = [];
   const seen = new Set();
@@ -311,7 +420,15 @@ function renderReferenceIndex(validation, evidenceRegistry, kind) {
   const cards = references.map(({ id, entry }) => {
     const type = entry?.type ?? "unresolved";
     const source = entry?.source ?? {};
-    return `<article class="reference-card reference-${escapeHtml(type)}" id="reference-${escapeHtml(id)}">
+    const label = `${id}: ${entry?.claim ?? "Unresolved reference"}`;
+    const plainText = joinPlainText(
+      id,
+      entry?.claim ?? "Reference metadata was not supplied to the renderer.",
+      `Type\n${type}`,
+      `Source\n${entry ? `${source.kind ?? "unknown"} / ${source.locator ?? "unknown"}` : "unavailable"}`,
+      `Status\n${entry?.status ?? "unresolved"}`,
+    );
+    return `<article class="reference-card reference-${escapeHtml(type)}" id="reference-${escapeHtml(id)}"${manifest.anchor(`${kind}/references/${id}`, label, plainText)}>
       <div class="reference-heading"><span>${renderInline(id)}</span><em>${escapeHtml(type)}</em></div>
       <p>${entry ? renderInline(entry.claim) : "Reference metadata was not supplied to the renderer."}</p>
       <dl>
@@ -324,7 +441,7 @@ function renderReferenceIndex(validation, evidenceRegistry, kind) {
   return `<div class="reference-intro"><p>Every identity used above resolves here to its claim, provenance, and status. Select any inline identity to jump to its reference.</p><span>${references.length} unique references</span></div><div class="reference-grid" data-reference-index="${escapeHtml(kind)}">${cards}</div>`;
 }
 
-function renderRoadmap(validation, evidenceRegistry) {
+function renderRoadmap(validation, evidenceRegistry, manifest) {
   const document = validation.document;
   const objective = getSection(document, "Objective");
   const requirements = requirementItems(getSection(document, "Requirements"));
@@ -343,7 +460,10 @@ function renderRoadmap(validation, evidenceRegistry) {
   const phaseCards = phases.map((phase, index) => {
     const status = getField(phase, "Status");
     const statusClass = status.toLowerCase().replace(/[^a-z0-9]+/gu, "-");
-    return `<article class="phase-card">
+    const id = entryId(phase);
+    const label = `${id}: ${entryTitle(phase)}`;
+    const plainText = entryPlainText(phase, ["Goal", "Requirements", "Depends on", "Exit evidence", "Status"]);
+    return `<article class="phase-card"${manifest.anchor(`roadmap/phases/${id}`, label, plainText)}>
       <div class="phase-card-top"><span class="phase-number">${String(index + 1).padStart(2, "0")}</span><span class="status status-${escapeHtml(statusClass)}">${renderInline(status)}</span></div>
       <p class="phase-id">${renderInline(entryId(phase))}</p>
       <h3>${renderInline(entryTitle(phase))}</h3>
@@ -358,21 +478,27 @@ function renderRoadmap(validation, evidenceRegistry) {
 
   const requirementCards = requirements.map((requirement) => {
     const owners = phases.filter((phase) => splitList(getField(phase, "Requirements")).includes(requirement.id));
-    return `<article class="requirement-card"><span>${renderInline(requirement.id)}</span><p>${renderInline(requirement.text)}</p><small>${owners.length} phase${owners.length === 1 ? "" : "s"}</small></article>`;
+    const label = `${requirement.id}: ${requirement.text}`;
+    const plainText = joinPlainText(requirement.id, plainInline(requirement.text), `${owners.length} phase${owners.length === 1 ? "" : "s"}`);
+    return `<article class="requirement-card"${manifest.anchor(`roadmap/requirements/${requirement.id}`, label, plainText)}><span>${renderInline(requirement.id)}</span><p>${renderInline(requirement.text)}</p><small>${owners.length} phase${owners.length === 1 ? "" : "s"}</small></article>`;
   }).join("\n");
 
-  const riskCards = risks.entries.map((risk) => `<article class="roadmap-risk">
-    <div><span>${renderInline(entryId(risk))}</span><h3>${renderInline(entryTitle(risk))}</h3></div>
+  const riskCards = risks.entries.map((risk) => {
+    const id = entryId(risk);
+    const label = `${id}: ${entryTitle(risk)}`;
+    return `<article class="roadmap-risk"${manifest.anchor(`roadmap/risks/${id}`, label, entryPlainText(risk, ["Impact", "Mitigation", "Possible solution", "Evidence"]))}>
+    <div><span>${renderInline(id)}</span><h3>${renderInline(entryTitle(risk))}</h3></div>
     <p><strong>Impact</strong><span class="roadmap-risk-copy">${renderInline(getField(risk, "Impact"))}</span></p>
     <p><strong>Mitigation</strong><span class="roadmap-risk-copy">${renderInline(getField(risk, "Mitigation"))}</span></p>
     <p><strong>Possible solution</strong><span class="roadmap-risk-copy">${renderInline(getField(risk, "Possible solution"))}</span></p>
-  </article>`).join("\n");
+  </article>`;
+  }).join("\n");
 
   return `<header class="roadmap-hero">
     <div class="hero-inner">
       <div class="eyebrow">Phasecraft roadmap / strategic atlas</div>
       <h1>${escapeHtml(document.title?.text ?? "Phasecraft roadmap")}</h1>
-      <div class="hero-copy">${renderContent(objective.content)}</div>
+      <div class="hero-copy"${manifest.anchor("roadmap/objective", "Objective", plainContent(objective.content))}>${renderContent(objective.content)}</div>
       <div class="roadmap-scope-banner" data-artifact-scope="all-phases"><span>All phases</span><div><strong>Whole-work strategic roadmap</strong><p>This artifact defines phase sequence and ownership. Execution requires a separately planned and independently verified phase.</p></div></div>
       <div class="metric-row">
         ${metric("phases", String(phases.length), `${completedCount} completed`)}
@@ -402,17 +528,17 @@ function renderRoadmap(validation, evidenceRegistry) {
       </div>
       <div>
         <div class="section-heading compact"><span>05</span><div><p>Discovery queue</p><h2>Open unknowns</h2></div></div>
-        ${sectionIsNone(unknowns) ? '<p class="empty-state resolved">No unresolved roadmap unknowns.</p>' : `<div class="unknown-panel">${renderContent(unknowns.content)}</div>`}
+        ${sectionIsNone(unknowns) ? `<p class="empty-state resolved"${manifest.anchor("roadmap/unknowns", "Open unknowns", plainContent(unknowns.content))}>No unresolved roadmap unknowns.</p>` : `<div class="unknown-panel"${manifest.anchor("roadmap/unknowns", "Open unknowns", plainContent(unknowns.content))}>${renderContent(unknowns.content)}</div>`}
       </div>
     </section>
     <section class="roadmap-section reference-section">
       <div class="section-heading"><span>06</span><div><p>Traceability</p><h2>Evidence reference atlas</h2></div></div>
-      ${renderReferenceIndex(validation, evidenceRegistry, "roadmap")}
+      ${renderReferenceIndex(validation, evidenceRegistry, "roadmap", manifest)}
     </section>
   </main>`;
 }
 
-function renderPlan(validation, evidenceRegistry, options = {}) {
+function renderPlan(validation, evidenceRegistry, options = {}, manifest) {
   const document = validation.document;
   const phaseContext = planPhaseContext(document, options.phase);
   const goal = getSection(document, "Goal");
@@ -435,75 +561,107 @@ function renderPlan(validation, evidenceRegistry, options = {}) {
   const coverageRows = requirements.map((requirement) => {
     const coveringTasks = tasks.filter((task) => splitList(getField(task, "Requirements")).includes(requirement.id));
     const checks = coveringTasks.flatMap((task) => getField(task, "Verification").split(";").map((check) => check.trim()).filter(Boolean));
-    return `<tr><th><span>${renderInline(requirement.id)}</span><small>${renderInline(requirement.text)}</small></th><td>${renderChips(coveringTasks.map(entryId), "chip task-chip")}</td><td><strong>${checks.length}</strong><span>observations</span></td></tr>`;
+    const plainText = joinPlainText(
+      requirement.id,
+      plainInline(requirement.text),
+      `Tasks\n${coveringTasks.map(entryId).join(", ") || "none"}`,
+      `Checks\n${checks.join("\n") || "none"}`,
+    );
+    return `<tr${manifest.anchor(`plan/requirement-coverage/${requirement.id}`, `${requirement.id} requirement coverage`, plainText)}><th><span>${renderInline(requirement.id)}</span><small>${renderInline(requirement.text)}</small></th><td>${renderChips(coveringTasks.map(entryId), "chip task-chip")}</td><td><strong>${checks.length}</strong><span>observations</span></td></tr>`;
   }).join("\n");
 
   const changeCards = changes.map((change) => {
     const blocks = parseEntryDetailBlocks(change);
+    const id = entryId(change);
+    const semantic = `plan/technical-design/${id}`;
+    const label = `${id}: ${entryTitle(change)}`;
     const databaseChanges = getField(change, "Database changes") || "Not declared";
     const apiChanges = getField(change, "API changes") || "Not declared";
     const flowImpact = getField(change, "Flow impact") || "Not declared";
     const databaseDetail = databaseChanges.toLowerCase() === "none" && !blocks.get("database migration")
       ? ""
-      : `<div class="database-detail"><div><strong>Database migration</strong><p>${renderInline(databaseChanges)}</p></div>${renderTechnicalBlock(blocks.get("database migration"), "Migration detail")}${renderTechnicalBlock(blocks.get("rollback plan"), "Rollback plan")}</div>`;
-    return `<article class="change-card">
-      <div class="change-heading"><div><span>${renderInline(entryId(change))}</span><h3>${renderInline(entryTitle(change))}</h3><em>${escapeHtml(getField(change, "Change type") || "type not declared")}</em></div><div class="target"><code>${renderInline(getField(change, "File"))}</code><small>${renderInline(getField(change, "Symbol"))}</small></div></div>
+      : `<div class="database-detail"><div><strong>Database migration</strong><p>${renderInline(databaseChanges)}</p></div>${renderTechnicalBlock(blocks.get("database migration"), "Migration detail", manifest, `${semantic}/block/database-migration`, `${label} — Database migration`)}${renderTechnicalBlock(blocks.get("rollback plan"), "Rollback plan", manifest, `${semantic}/block/rollback-plan`, `${label} — Rollback plan`)}</div>`;
+    const changeText = entryPlainText(change, ["Change type", "File", "Symbol", "Before", "Proposed after", "Reason", "Database changes", "API changes", "Flow impact"]);
+    return `<article class="change-card"${manifest.anchor(semantic, label, changeText)}>
+      <div class="change-heading"><div><span>${renderInline(id)}</span><h3>${renderInline(entryTitle(change))}</h3><em>${escapeHtml(getField(change, "Change type") || "type not declared")}</em></div><div class="target"><code>${renderInline(getField(change, "File"))}</code><small>${renderInline(getField(change, "Symbol"))}</small></div></div>
       <div class="delta-lane">
-        <div class="delta before"><span>Verified before</span><p>${renderInline(getField(change, "Before"))}</p></div>
+        <div class="delta before"${manifest.anchor(`${semantic}/field/before`, `${label} — Verified before`, joinPlainText("Verified before", plainInline(getField(change, "Before"))))}><span>Verified before</span><p>${renderInline(getField(change, "Before"))}</p></div>
         <div class="delta-arrow" aria-hidden="true">&rarr;</div>
-        <div class="delta after"><span>Proposed after</span><p>${renderInline(getField(change, "Proposed after"))}</p></div>
+        <div class="delta after"${manifest.anchor(`${semantic}/field/proposed-after`, `${label} — Proposed after`, joinPlainText("Proposed after", plainInline(getField(change, "Proposed after"))))}><span>Proposed after</span><p>${renderInline(getField(change, "Proposed after"))}</p></div>
       </div>
-      <div class="code-delta">${renderTechnicalBlock(blocks.get("before code"), "Before code")}${renderTechnicalBlock(blocks.get("proposed code"), "Proposed code")}</div>
-      <div class="contract-impact"><div><strong>Database impact</strong><p>${renderInline(databaseChanges)}</p></div><div><strong>API impact</strong><p>${renderInline(apiChanges)}</p></div><div><strong>Flow impact</strong><p>${renderInline(flowImpact)}</p></div></div>
-      <div class="expected-result">${renderTechnicalBlock(blocks.get("expected result"), "Expected result")}</div>
+      <div class="code-delta">${renderTechnicalBlock(blocks.get("before code"), "Before code", manifest, `${semantic}/block/before-code`, `${label} — Before code`)}${renderTechnicalBlock(blocks.get("proposed code"), "Proposed code", manifest, `${semantic}/block/proposed-code`, `${label} — Proposed code`)}</div>
+      <div class="contract-impact"><div${manifest.anchor(`${semantic}/field/database-changes`, `${label} — Database changes`, joinPlainText("Database impact", databaseChanges))}><strong>Database impact</strong><p>${renderInline(databaseChanges)}</p></div><div${manifest.anchor(`${semantic}/field/api-changes`, `${label} — API changes`, joinPlainText("API impact", apiChanges))}><strong>API impact</strong><p>${renderInline(apiChanges)}</p></div><div${manifest.anchor(`${semantic}/field/flow-impact`, `${label} — Flow impact`, joinPlainText("Flow impact", flowImpact))}><strong>Flow impact</strong><p>${renderInline(flowImpact)}</p></div></div>
+      <div class="expected-result">${renderTechnicalBlock(blocks.get("expected result"), "Expected result", manifest, `${semantic}/block/expected-result`, `${label} — Expected result`)}</div>
       ${databaseDetail}
       <p class="reason"><strong>Why</strong><span class="reason-copy">${renderInline(getField(change, "Reason"))}</span></p>
     </article>`;
   }).join("\n");
 
-  const applicationFlowCards = applicationFlows.map((entry) => renderApplicationFlow(entry, phaseContext.current)).join("\n");
+  const applicationFlowCards = applicationFlows.map((entry) => renderApplicationFlow(entry, phaseContext.current, manifest)).join("\n");
   const contextDescription = phaseContext.contextPhases.length > 0
     ? `Application flows labeled ${phaseContext.contextPhases.map(renderInline).join(", ")} are future context only and are not authorized by this plan.`
     : "Every application flow shown here is owned by the current executable phase.";
 
-  const taskCards = tasks.map((task, index) => `<article class="task-card">
+  const taskCards = tasks.map((task, index) => {
+    const id = entryId(task);
+    const label = `${id}: ${entryTitle(task)}`;
+    return `<article class="task-card"${manifest.anchor(`plan/tasks/${id}`, label, entryPlainText(task, ["Requirements", "Evidence", "Depends on", "Files", "Change", "Verification", "Commit group"]))}>
     <div class="task-index">${String(index + 1).padStart(2, "0")}</div>
     <div class="task-body">
-      <div class="task-title"><div><span>${renderInline(entryId(task))}</span><h3>${renderInline(entryTitle(task))}</h3></div><span class="commit-badge">${renderInline(getField(task, "Commit group"))}</span></div>
+      <div class="task-title"><div><span>${renderInline(id)}</span><h3>${renderInline(entryTitle(task))}</h3></div><span class="commit-badge">${renderInline(getField(task, "Commit group"))}</span></div>
       <p class="task-change">${renderInline(getField(task, "Change"))}</p>
       <div class="task-meta"><div><small>Requirements</small>${renderChips(splitList(getField(task, "Requirements")))}</div><div><small>Depends on</small>${renderChips(splitList(getField(task, "Depends on")))}</div></div>
       <div class="file-strip"><small>Files</small>${renderChips(splitList(getField(task, "Files")), "chip file-chip")}</div>
       <div class="verification-box"><small>Observable verification</small>${renderChecks(getField(task, "Verification"))}</div>
       <div class="evidence-line"><small>Evidence</small>${renderChips(splitList(getField(task, "Evidence")))}</div>
     </div>
-  </article>`).join("\n");
+  </article>`;
+  }).join("\n");
 
   const fileRows = files.map((file) => {
     const relatedTasks = tasks.filter((task) => splitList(getField(task, "Files")).includes(file));
     const relatedChanges = changes.filter((change) => getField(change, "File") === file);
     const groups = [...new Set(relatedTasks.map((task) => getField(task, "Commit group")))];
-    return `<tr><th><code>${renderInline(file)}</code></th><td>${renderChips(relatedChanges.map(entryId))}</td><td>${renderChips(relatedTasks.map(entryId), "chip task-chip")}</td><td>${renderChips(groups)}</td></tr>`;
+    const plainText = joinPlainText(
+      file,
+      `Changes\n${relatedChanges.map(entryId).join(", ") || "none"}`,
+      `Tasks\n${relatedTasks.map(entryId).join(", ") || "none"}`,
+      `Commit\n${groups.join(", ") || "none"}`,
+    );
+    return `<tr${manifest.anchor(`plan/files/file-${semanticKey(file)}`, `File: ${file}`, plainText)}><th><code>${renderInline(file)}</code></th><td>${renderChips(relatedChanges.map(entryId))}</td><td>${renderChips(relatedTasks.map(entryId), "chip task-chip")}</td><td>${renderChips(groups)}</td></tr>`;
   }).join("\n");
 
-  const riskCards = risks.map((risk) => `<article class="risk-card">
-    <div class="risk-title"><span>${renderInline(entryId(risk))}</span><h3>${renderInline(entryTitle(risk))}</h3></div>
+  const riskCards = risks.map((risk) => {
+    const id = entryId(risk);
+    const label = `${id}: ${entryTitle(risk)}`;
+    return `<article class="risk-card"${manifest.anchor(`plan/risks/${id}`, label, entryPlainText(risk, ["Impact", "Mitigation", "Possible solution", "Evidence"]))}>
+    <div class="risk-title"><span>${renderInline(id)}</span><h3>${renderInline(entryTitle(risk))}</h3></div>
     <dl><dt>Impact</dt><dd>${renderInline(getField(risk, "Impact"))}</dd><dt>Mitigation</dt><dd>${renderInline(getField(risk, "Mitigation"))}</dd><dt>Possible solution</dt><dd>${renderInline(getField(risk, "Possible solution"))}</dd><dt>Evidence</dt><dd>${renderChips(splitList(getField(risk, "Evidence")))}</dd></dl>
-  </article>`).join("\n");
+  </article>`;
+  }).join("\n");
 
-  const commitCards = commits.map((commit, index) => `<article class="commit-card">
-    <span class="commit-order">${index + 1}</span><div><p>${renderInline(entryId(commit))}</p><h3><code>${renderInline(getField(commit, "Message"))}</code></h3>${renderChips(splitList(getField(commit, "Files")), "chip file-chip")}<small>Depends on: ${renderInline(getField(commit, "Depends on"))}</small></div>
-  </article>`).join("\n");
+  const commitCards = commits.map((commit, index) => {
+    const id = entryId(commit);
+    const label = `${id}: ${entryTitle(commit)}`;
+    return `<article class="commit-card"${manifest.anchor(`plan/commit-groups/${id}`, label, entryPlainText(commit, ["Files", "Message", "Depends on"]))}>
+    <span class="commit-order">${index + 1}</span><div><p>${renderInline(id)}</p><h3><code>${renderInline(getField(commit, "Message"))}</code></h3>${renderChips(splitList(getField(commit, "Files")), "chip file-chip")}<small>Depends on: ${renderInline(getField(commit, "Depends on"))}</small></div>
+  </article>`;
+  }).join("\n");
 
-  const manualCards = manualChecks.entries.map((check) => `<article class="manual-card">
-    <div class="manual-heading"><span>${renderInline(entryId(check))}</span><strong>${renderInline(entryTitle(check))}</strong><small class="manual-requirement">Requirement ${renderInline(getField(check, "Requirement"))}</small><em>${renderInline(getField(check, "Status"))}</em></div>
+  const manualCards = manualChecks.entries.map((check) => {
+    const id = entryId(check);
+    const label = `${id}: ${entryTitle(check)}`;
+    return `<article class="manual-card"${manifest.anchor(`plan/manual-checks/${id}`, label, entryPlainText(check, ["Requirement", "Instructions", "Expected", "Status"]))}>
+    <div class="manual-heading"><span>${renderInline(id)}</span><strong>${renderInline(entryTitle(check))}</strong><small class="manual-requirement">Requirement ${renderInline(getField(check, "Requirement"))}</small><em>${renderInline(getField(check, "Status"))}</em></div>
     <div class="manual-copy"><div><small>Instructions</small><p>${renderInline(getField(check, "Instructions"))}</p></div><div><small>Expected observation</small><p>${renderInline(getField(check, "Expected"))}</p></div></div>
-  </article>`).join("\n");
+  </article>`;
+  }).join("\n");
 
   return `<header class="plan-hero">
     <div class="hero-inner">
       <div class="eyebrow">Phasecraft plan / execution cockpit</div>
       <h1>${escapeHtml(document.title?.text ?? "Phasecraft plan")}</h1>
-      <div class="hero-copy">${renderContent(goal.content)}</div>
+      <div class="hero-copy"${manifest.anchor("plan/goal", "Goal", plainContent(goal.content))}>${renderContent(goal.content)}</div>
       <div class="phase-scope-banner" data-executable-phase="${escapeHtml(phaseContext.current ?? "unspecified")}"><div class="phase-scope-marker"><small>Current executable phase</small><strong>${phaseContext.current ? renderInline(phaseContext.current) : "Not declared"}</strong></div><div class="phase-scope-copy"><strong>This document authorizes ${phaseContext.current ? renderInline(phaseContext.current) : "one declared phase"} only.</strong><p>${contextDescription}</p></div></div>
       <div class="metric-row">
         ${metric("tasks", String(tasks.length), "ordered for execution")}
@@ -516,7 +674,7 @@ function renderPlan(validation, evidenceRegistry, options = {}) {
   <main class="plan-main" data-view="execution-cockpit">
     <section class="plan-section brief-section">
       <div class="section-heading"><span>00</span><div><p>Grounding</p><h2>Inputs and constraints</h2></div></div>
-      <div class="brief-grid"><div><h3>Evidence inputs</h3>${renderContent(inputs.content)}</div><div><h3>Requirements</h3>${requirements.map((requirement) => `<p class="brief-requirement"><span>${renderInline(requirement.id)}</span><span class="brief-requirement-copy">${renderInline(requirement.text)}</span></p>`).join("")}</div></div>
+      <div class="brief-grid"><div${manifest.anchor("plan/inputs", "Inputs", plainContent(inputs.content))}><h3>Evidence inputs</h3>${renderContent(inputs.content)}</div><div><h3>Requirements</h3>${requirements.map((requirement) => `<p class="brief-requirement"${manifest.anchor(`plan/requirements/${requirement.id}`, `${requirement.id}: ${requirement.text}`, joinPlainText(requirement.id, plainInline(requirement.text)))}><span>${renderInline(requirement.id)}</span><span class="brief-requirement-copy">${renderInline(requirement.text)}</span></p>`).join("")}</div></div>
     </section>
     <section class="plan-section">
       <div class="section-heading"><span>01</span><div><p>Behavior delta</p><h2>Change blueprint</h2></div></div>
@@ -545,11 +703,11 @@ function renderPlan(validation, evidenceRegistry, options = {}) {
     </section>
     <section class="plan-section">
       <div class="section-heading"><span>08</span><div><p>Human evidence</p><h2>Manual checks</h2></div></div>
-      ${sectionIsNone(manualChecks) ? '<p class="empty-state resolved">No manual checks required for this phase.</p>' : `<div class="manual-grid" data-layout="rows">${manualCards}</div>`}
+      ${sectionIsNone(manualChecks) ? `<p class="empty-state resolved"${manifest.anchor("plan/manual-checks", "Manual checks", plainContent(manualChecks.content))}>No manual checks required for this phase.</p>` : `<div class="manual-grid" data-layout="rows">${manualCards}</div>`}
     </section>
     <section class="plan-section reference-section">
       <div class="section-heading"><span>09</span><div><p>Traceability</p><h2>Evidence and decision reference</h2></div></div>
-      ${renderReferenceIndex(validation, evidenceRegistry, "plan")}
+      ${renderReferenceIndex(validation, evidenceRegistry, "plan", manifest)}
     </section>
   </main>`;
 }
@@ -909,9 +1067,11 @@ export function renderArtifact(kind, source, options = {}) {
   const browserTitle = kind === "roadmap"
     ? `All Phases · ${title} · Phasecraft Roadmap`
     : planBrowserTitle(title, phaseContext.current);
+  const reviewManifest = new ReviewManifestBuilder();
   const body = kind === "roadmap"
-    ? renderRoadmap(validation, options.evidenceRegistry)
-    : renderPlan(validation, options.evidenceRegistry, { phase: phaseContext.current });
+    ? renderRoadmap(validation, options.evidenceRegistry, reviewManifest)
+    : renderPlan(validation, options.evidenceRegistry, { phase: phaseContext.current }, reviewManifest);
+  const reviewManifestScript = `<script type="application/json" id="phasecraft-review-manifest">${escapeJsonForHtml(reviewManifest.toJSON(body))}</script>`;
   const hasMermaid = kind === "plan"
     && (validation.document.sections.get("Application Flows")?.entries.length ?? 0) > 0;
   const mermaidRuntime = hasMermaid ? `<script data-phasecraft-renderer="mermaid" src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
@@ -953,6 +1113,7 @@ ${phaseContext?.current ? `<meta name="phasecraft-executable-phase" content="${e
 <body class="${kind}" data-artifact-scope="${artifactScope}"${phaseContext?.current ? ` data-executable-phase="${escapeHtml(phaseContext.current)}"` : ""}>
 ${body}
 <footer>Authoritative source: Markdown / schema v${ARTIFACT_SCHEMA_VERSION} / scope ${artifactScope}${phaseContext?.current ? ` / executable phase ${escapeHtml(phaseContext.current)}` : ""} / SHA-256 ${validation.sourceHash}</footer>
+${reviewManifestScript}
 ${mermaidRuntime}
 </body>
 </html>

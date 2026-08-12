@@ -139,3 +139,20 @@ test("plan verification returns semantic findings to human disposition", async (
   assert.match(execute, /accepted-risk guardrail/iu);
   assert.match(skill, /The phase may become `plan_verified`/iu);
 });
+
+test("planning and status prompts integrate explicit interactive feedback", async () => {
+  const plan = await readFile(path.join(root, "opencode", "commands", "phasecraft-plan.md"), "utf8");
+  const planner = await readFile(path.join(root, "opencode", "agents", "phasecraft-planner.md"), "utf8");
+  const status = await readFile(path.join(root, "opencode", "commands", "phasecraft-status.md"), "utf8");
+  const skill = await readFile(path.join(root, "opencode", "skills", "phasecraft", "SKILL.md"), "utf8");
+  assert.match(plan, /--feedback FB-NNN/u);
+  assert.match(plan, /feedback-show/u);
+  assert.match(plan, /feedback-resolve/u);
+  assert.match(plan, /review-start --artifact plan/u);
+  assert.match(planner, /Feedback may express a user decision but never proves a repository claim/iu);
+  assert.match(status, /feedback-list/u);
+  assert.match(status, /review-status/u);
+  assert.match(skill, /Interactive Review Contract/u);
+  assert.match(skill, /loopback-only shell/u);
+  assert.match(skill, /never workflow authority/iu);
+});
