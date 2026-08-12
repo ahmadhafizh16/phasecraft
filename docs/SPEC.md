@@ -57,7 +57,7 @@ Before each network lookup, Discuss presents the question and intended source cl
 
 Plan checks authority drift, maintains the full roadmap, and details only the next executable phase. Each technical change names its type, file, symbol, evidence-backed before state, labeled proposed after state, reason, database impact, API impact, and `F-*` application-flow impact, with concrete language-tagged before/proposed snapshots, a concrete expected-result object/payload/observation, plus migration and rollback where applicable. Application flows trace user-facing surfaces through separate Mermaid BEFORE/AFTER lanes, map behavior-changing AFTER nodes to owning phase/file/symbol/edit, and retain owning-phase context even for known later-phase behavior. Each task names evidence, dependencies, files, change, checks, and commit group. Risks include impact, mitigation, possible solution, and evidence. Manual checks are independent executable scenarios with exact instructions and observable results.
 
-Plan validates restricted Markdown and generates `roadmap.html` and `plan.html` in both artifact modes. The two derivatives are intentionally different: the roadmap is a strategic phase/dependency atlas, while the plan is an implementation review cockpit for server-side syntax-highlighted before/proposed code and expected results, Mermaid BEFORE/AFTER application-flow comparisons, surgical change tables, database/API impact, migration and rollback detail, requirement coverage, task order, file impact, risks, row-based manual checks, and commit groups. Evidence identities link to registry-backed claim, provenance, and status cards. Native task dependency diagrams are generated only when multiple nodes or declared dependencies make them informative. Application diagrams load a pinned Mermaid browser renderer with strict security and preserve source fallback.
+Plan validates restricted Markdown and generates `roadmap.html` and `plan.html` in both artifact modes. The two derivatives are intentionally different: the roadmap visibly declares whole-work/all-phase strategic scope, while each phase-directory plan visibly declares one current executable phase and labels flows owned by other phases as future context that it does not authorize. The plan remains an implementation review cockpit for server-side syntax-highlighted before/proposed code and expected results, Mermaid BEFORE/AFTER application-flow comparisons, surgical change tables, database/API/flow impact panels, migration and rollback detail, requirement coverage, task order, file impact, risks, row-based manual checks, and commit groups. Browser titles and machine metadata carry artifact scope and executable phase. Evidence identities link to registry-backed claim, provenance, and status cards. Native task dependency diagrams are generated only when multiple nodes or declared dependencies make them informative. Application diagrams load a pinned Mermaid browser renderer with strict security and preserve source fallback. Planner and auditor agents validate the Markdown and deterministic HTML structure without Playwright or browser automation; visual review is a human feedback loop, not an approval gate.
 
 ### Verify Plan
 
@@ -74,11 +74,15 @@ The plan auditor runs in an independent OpenCode subtask. It validates:
 - Dirty baseline overlap and unrelated scope.
 - The HTML source hash.
 
-Blocking findings leave the work in `plan_draft`. A clean audit transitions to `plan_verified`.
+Verify Plan separates non-waivable integrity failures from semantic engineering findings. Integrity failures are limited to conditions that prevent trustworthy approval binding: illegal state/revision, stale or missing confirmed authority, restricted-schema validation errors, a missing active plan, unresolved evidence identities, plan/HTML source-hash mismatch, or exposed secrets/credentials. They leave the work in `plan_draft` and cannot be waived through Q&A.
+
+Every other finding is classified as active-phase safety/correctness, active-phase completeness, future-phase, or artifact quality. The auditor recommends a disposition but asks the human to choose `fix-now`, `defer`, `accept-risk`, or `non-blocking`. Deferred findings require an owner phase or trigger and remain open in `plan/DEFERRED-FINDINGS.md`; accepted risks require execution guardrails. `PLAN-VERIFICATION.md` preserves all findings and Q&A decisions bound to the exact plan SHA-256. No answer is inferred from silence or urgency.
+
+The audit transitions to `plan_verified` when integrity passes, every semantic finding has a human disposition, and none remain `fix-now` or `pending`. Its outcome is `APPROVED` when there were no findings or `APPROVED WITH DISPOSITIONS` otherwise. `fix-now`, pending Q&A, and integrity failures retain `plan_draft` as `CHANGES REQUESTED`, `NEEDS HUMAN DECISION`, and `BLOCKED BY INTEGRITY GATE`, respectively. This permits deliberate speed without hiding risk or requiring a perfect first plan.
 
 ### Execute
 
-Execute verifies the approved plan revision and runs the entire phase in dependency order. It edits only approved source files, records commands and observations, and writes a cumulative patch after each completed task.
+Execute verifies the approved plan revision and its exact-hash-bound verification dispositions, then runs the entire phase in dependency order. It edits only approved source files, records commands and observations, carries accepted-risk guardrails into execution evidence, and writes a cumulative patch after each completed task. Deferred findings remain outside current scope until their owner phase or trigger is due.
 
 New scope, files, architecture, dependencies, public APIs, schemas, or security behavior are material deviations. Execute stops, archives the current plan, returns to `plan_draft`, and requires a new audit. Minor evidence-backed implementation details are logged without rewriting the approved plan.
 
@@ -86,7 +90,7 @@ Execute never commits, pushes, resets, switches branches, or cleans the tree.
 
 ### Verify
 
-The verifier runs independently and compares decisions, evidence, approved plan, actual diff, execution record, automatic checks, negative cases, boundaries, and baseline exclusions.
+The verifier runs independently and compares decisions, evidence, approved plan and dispositions, actual diff, execution record, automatic checks, negative cases, boundaries, accepted-risk guardrails, and baseline exclusions. It reports whether an accepted risk materialized and does not fail solely because a not-yet-due deferred finding remains open.
 
 Outcomes are:
 

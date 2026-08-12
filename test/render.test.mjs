@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -63,6 +63,22 @@ const noApplicationFlowPlan = validPlan
   .replace("- Flow impact: F-001 inserts bounded validation before session construction and rejects invalid input before state is created.", "- Flow impact: none")
   .replace(/\n## Application Flows[\s\S]*?(?=\n## Tasks)/u, "");
 
+const richInlinePlan = validPlan
+  .replace(
+    "- REQ-001: Reject timeout values outside the supported range.",
+    "- REQ-001: Reject `timeout` values outside the supported range. D-001 P-001",
+  )
+  .replace(
+    "- Reason: Prevent invalid lifecycle behavior while preserving D-001.",
+    "- Reason: P-01 and P-02 need one safe contract while preserving D-001.",
+  );
+
+const futureContextPlan = validPlan.replace("- Phase: P-01", "- Phase: P-02");
+const namedPhasePlan = validPlan.replace("# Phase 01: Session timeout", "# MRS-4983 P-01 — Campaign foundation");
+const pathScopedPlan = validPlan
+  .replace("# Phase 01: Session timeout", "# Session timeout plan")
+  .replaceAll("P-01", "P-07");
+
 test("renders deterministic standalone HTML bound to the Markdown hash", () => {
   const first = renderArtifact("plan", validPlan, { evidenceRegistry }).html;
   const second = renderArtifact("plan", validPlan, { evidenceRegistry }).html;
@@ -99,6 +115,33 @@ test("renders roadmap and plan as distinct information products", () => {
   assert.notEqual(roadmap, plan);
 });
 
+test("makes whole-work and executable-phase scope explicit", () => {
+  const roadmap = renderArtifact("roadmap", validRoadmap, { evidenceRegistry }).html;
+  const plan = renderArtifact("plan", validPlan, { evidenceRegistry }).html;
+  const future = renderArtifact("plan", futureContextPlan, { evidenceRegistry }).html;
+  const named = renderArtifact("plan", namedPhasePlan, { evidenceRegistry }).html;
+
+  assert.match(roadmap, /<meta name="phasecraft-artifact-scope" content="all-phases">/u);
+  assert.match(roadmap, /<title>All Phases · Session reliability roadmap · Phasecraft Roadmap<\/title>/u);
+  assert.match(roadmap, /Whole-work strategic roadmap/u);
+  assert.match(roadmap, /Execution requires a separately planned and independently verified phase/u);
+
+  assert.match(plan, /<meta name="phasecraft-artifact-scope" content="single-phase">/u);
+  assert.match(plan, /<meta name="phasecraft-executable-phase" content="P-01">/u);
+  assert.match(plan, /<title>P-01 · Session timeout · Phasecraft Plan<\/title>/u);
+  assert.match(plan, /data-executable-phase="P-01"/u);
+  assert.match(plan, /Current executable phase/u);
+  assert.match(plan, /This document authorizes <span class="identity identity-phase">P-01<\/span> only/u);
+  assert.match(plan, /data-phase-scope="current"/u);
+  assert.match(plan, /Current phase/u);
+
+  assert.match(future, /data-phase-scope="future"/u);
+  assert.match(future, /flow-phase-future/u);
+  assert.match(future, /Future context/u);
+  assert.match(future, /are future context only and are not authorized by this plan/u);
+  assert.match(named, /<title>P-01 · MRS-4983 — Campaign foundation · Phasecraft Plan<\/title>/u);
+});
+
 test("adds dependency diagrams only when relationships need visualization", () => {
   const singleRoadmap = renderArtifact("roadmap", validRoadmap, { evidenceRegistry }).html;
   const singlePlan = renderArtifact("plan", validPlan, { evidenceRegistry }).html;
@@ -132,8 +175,17 @@ test("resolves evidence identities to claims and provenance", () => {
   assert.match(roadmap, /id="reference-E-001"/u);
 });
 
+test("keeps rich requirement and reason copy in one grid child", () => {
+  const html = renderArtifact("plan", richInlinePlan, { evidenceRegistry }).html;
+  assert.match(html, /<p class="brief-requirement"><span><span class="identity identity-req">REQ-001<\/span><\/span><span class="brief-requirement-copy">Reject <code>timeout<\/code> values/u);
+  assert.match(html, /<p class="reason"><strong>Why<\/strong><span class="reason-copy"><span class="identity identity-phase">P-01<\/span> and <span class="identity identity-phase">P-02<\/span>/u);
+  assert.match(html, /\.brief-requirement-copy \{ min-width: 0; \}/u);
+  assert.match(html, /\.reason-copy \{ min-width: 0; \}/u);
+});
+
 test("visualizes code deltas and database contract changes", () => {
   const html = renderArtifact("plan", databasePlan, { evidenceRegistry }).html;
+  const visibleText = html.replace(/<[^>]+>/gu, "");
   assert.match(html, /Before code/u);
   assert.match(html, /Proposed code/u);
   assert.match(html, /<span class="syntax-function">assertTimeoutInRange<\/span>\(timeout\)/u);
@@ -143,6 +195,8 @@ test("visualizes code deltas and database contract changes", () => {
   assert.match(html, /session_timeout/u);
   assert.match(html, /Rollback plan/u);
   assert.match(html, /API impact/u);
+  assert.match(html, /Flow impact/u);
+  assert.match(visibleText, /F-001 inserts bounded validation/u);
   assert.match(html, /Expected result/u);
   assert.match(html, /<span class="syntax-keyword">ALTER<\/span>/u);
   assert.match(html, /<span class="syntax-keyword">DROP<\/span>/u);
@@ -190,6 +244,22 @@ test("writes rendered HTML to a requested file", async (t) => {
   const result = await renderArtifactFile("plan", sourcePath, outputPath, { evidenceFile: evidencePath });
   assert.equal(result.sourceHash, sha256(validPlan));
   assert.match(await readFile(outputPath, "utf8"), /Phasecraft plan/u);
+});
+
+test("infers executable phase from the phase directory", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "phasecraft-phase-render-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const phaseDirectory = path.join(root, "plan", "phases", "P-07-session-timeout");
+  const sourcePath = path.join(phaseDirectory, "PLAN.md");
+  const outputPath = path.join(phaseDirectory, "plan.html");
+  const { writeFile } = await import("node:fs/promises");
+  await mkdir(phaseDirectory, { recursive: true });
+  await writeFile(sourcePath, pathScopedPlan);
+  await renderArtifactFile("plan", sourcePath, outputPath);
+  const html = await readFile(outputPath, "utf8");
+  assert.match(html, /<meta name="phasecraft-executable-phase" content="P-07">/u);
+  assert.match(html, /<title>P-07 · Session timeout plan · Phasecraft Plan<\/title>/u);
+  assert.match(html, /data-executable-phase="P-07"/u);
 });
 
 test("archives an immutable plan version with bound HTML", async (t) => {

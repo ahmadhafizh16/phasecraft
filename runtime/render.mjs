@@ -71,6 +71,42 @@ function entryTitle(entry) {
   return separator === -1 ? entry.heading : entry.heading.slice(separator + 1).trim();
 }
 
+function phaseId(value) {
+  const source = String(value ?? "");
+  const exact = source.match(/\bP-(\d{2})\b/iu);
+  if (exact) return `P-${exact[1]}`;
+  const labeled = source.match(/\bPhase\s+(\d{1,2})\b/iu);
+  return labeled ? `P-${labeled[1].padStart(2, "0")}` : null;
+}
+
+function planPhaseContext(document, explicitPhase = null) {
+  const current = phaseId(explicitPhase) ?? phaseId(document.title?.text);
+  const flowPhases = [...new Set(
+    getSection(document, "Application Flows").entries
+      .map((entry) => phaseId(getField(entry, "Phase")))
+      .filter(Boolean),
+  )];
+  return {
+    current,
+    contextPhases: flowPhases.filter((phase) => phase !== current).sort(),
+  };
+}
+
+function planBrowserTitle(title, phase) {
+  if (!phase) return `Phasecraft Plan · ${title}`;
+  const descriptor = title
+    .replace(/\bP-\d{2}\b/iu, "")
+    .replace(/^Phase\s+\d{1,2}\s*[:—–-]?\s*/iu, "")
+    .replace(/\s{2,}/gu, " ")
+    .trim();
+  return `${phase} · ${descriptor || "Phase plan"} · Phasecraft Plan`;
+}
+
+function phaseFromPath(filePath) {
+  const segment = path.resolve(filePath).split(path.sep).find((value) => /^P-\d{2}(?:-|$)/iu.test(value));
+  return phaseId(segment);
+}
+
 function splitList(value) {
   if (!value || value.trim().toLowerCase() === "none") return [];
   return value.split(",").map((item) => item.trim()).filter(Boolean);
@@ -139,13 +175,16 @@ function renderTechnicalBlock(block, label) {
   return `<div class="code-panel"><div class="code-panel-heading"><strong>${escapeHtml(label)}</strong><span>${escapeHtml(language)}</span></div><pre><code class="language-${escapeHtml(language.toLowerCase())}">${highlightCode(block.text, language)}</code></pre></div>`;
 }
 
-function renderApplicationFlow(entry) {
+function renderApplicationFlow(entry, currentPhase) {
   const blocks = parseEntryDetailBlocks(entry);
   const diagram = blocks.get("diagram");
   const changePoints = parseChangePoints(blocks.get("change points")).points;
   const pointRows = changePoints.map((point) => `<tr><th><code>${escapeHtml(point.node)}</code></th><td>${renderInline(point.phase)}</td><td><code>${renderInline(point.file)}</code><small>${renderInline(point.symbol)}</small></td><td>${renderInline(point.change)}</td></tr>`).join("\n");
-  return `<article class="application-flow-card" data-application-flow="${escapeHtml(entryId(entry))}">
-    <div class="application-flow-header"><div><span>${renderInline(entryId(entry))}</span><h3>${renderInline(entryTitle(entry))}</h3></div><em>${renderInline(getField(entry, "Phase"))}</em></div>
+  const ownerPhase = phaseId(getField(entry, "Phase"));
+  const phaseScope = currentPhase && ownerPhase !== currentPhase ? "future" : "current";
+  const phaseLabel = phaseScope === "current" ? "Current phase" : "Future context";
+  return `<article class="application-flow-card application-flow-${phaseScope}" data-application-flow="${escapeHtml(entryId(entry))}" data-phase-scope="${phaseScope}">
+    <div class="application-flow-header"><div><span>${renderInline(entryId(entry))}</span><h3>${renderInline(entryTitle(entry))}</h3></div><em class="flow-phase flow-phase-${phaseScope}">${renderInline(getField(entry, "Phase"))}<span>${phaseLabel}</span></em></div>
     <div class="application-flow-meta"><div><small>Surface</small><strong>${renderInline(getField(entry, "Surface"))}</strong></div><div><small>Entry point</small><code>${renderInline(getField(entry, "Entry point"))}</code></div></div>
     <div class="application-flow-delta"><div><small>Before</small><p>${renderInline(getField(entry, "Before"))}</p></div><div><small>After</small><p>${renderInline(getField(entry, "After"))}</p></div></div>
     <div class="mermaid-shell"><pre class="mermaid">${escapeHtml(diagram?.text ?? "")}</pre></div>
@@ -324,9 +363,9 @@ function renderRoadmap(validation, evidenceRegistry) {
 
   const riskCards = risks.entries.map((risk) => `<article class="roadmap-risk">
     <div><span>${renderInline(entryId(risk))}</span><h3>${renderInline(entryTitle(risk))}</h3></div>
-    <p><strong>Impact</strong>${renderInline(getField(risk, "Impact"))}</p>
-    <p><strong>Mitigation</strong>${renderInline(getField(risk, "Mitigation"))}</p>
-    <p><strong>Possible solution</strong>${renderInline(getField(risk, "Possible solution"))}</p>
+    <p><strong>Impact</strong><span class="roadmap-risk-copy">${renderInline(getField(risk, "Impact"))}</span></p>
+    <p><strong>Mitigation</strong><span class="roadmap-risk-copy">${renderInline(getField(risk, "Mitigation"))}</span></p>
+    <p><strong>Possible solution</strong><span class="roadmap-risk-copy">${renderInline(getField(risk, "Possible solution"))}</span></p>
   </article>`).join("\n");
 
   return `<header class="roadmap-hero">
@@ -334,6 +373,7 @@ function renderRoadmap(validation, evidenceRegistry) {
       <div class="eyebrow">Phasecraft roadmap / strategic atlas</div>
       <h1>${escapeHtml(document.title?.text ?? "Phasecraft roadmap")}</h1>
       <div class="hero-copy">${renderContent(objective.content)}</div>
+      <div class="roadmap-scope-banner" data-artifact-scope="all-phases"><span>All phases</span><div><strong>Whole-work strategic roadmap</strong><p>This artifact defines phase sequence and ownership. Execution requires a separately planned and independently verified phase.</p></div></div>
       <div class="metric-row">
         ${metric("phases", String(phases.length), `${completedCount} completed`)}
         ${metric("requirements", String(requirements.length), "mapped to phases")}
@@ -372,8 +412,9 @@ function renderRoadmap(validation, evidenceRegistry) {
   </main>`;
 }
 
-function renderPlan(validation, evidenceRegistry) {
+function renderPlan(validation, evidenceRegistry, options = {}) {
   const document = validation.document;
+  const phaseContext = planPhaseContext(document, options.phase);
   const goal = getSection(document, "Goal");
   const inputs = getSection(document, "Inputs");
   const requirements = requirementItems(getSection(document, "Requirements"));
@@ -401,6 +442,7 @@ function renderPlan(validation, evidenceRegistry) {
     const blocks = parseEntryDetailBlocks(change);
     const databaseChanges = getField(change, "Database changes") || "Not declared";
     const apiChanges = getField(change, "API changes") || "Not declared";
+    const flowImpact = getField(change, "Flow impact") || "Not declared";
     const databaseDetail = databaseChanges.toLowerCase() === "none" && !blocks.get("database migration")
       ? ""
       : `<div class="database-detail"><div><strong>Database migration</strong><p>${renderInline(databaseChanges)}</p></div>${renderTechnicalBlock(blocks.get("database migration"), "Migration detail")}${renderTechnicalBlock(blocks.get("rollback plan"), "Rollback plan")}</div>`;
@@ -412,14 +454,17 @@ function renderPlan(validation, evidenceRegistry) {
         <div class="delta after"><span>Proposed after</span><p>${renderInline(getField(change, "Proposed after"))}</p></div>
       </div>
       <div class="code-delta">${renderTechnicalBlock(blocks.get("before code"), "Before code")}${renderTechnicalBlock(blocks.get("proposed code"), "Proposed code")}</div>
-      <div class="contract-impact"><div><strong>Database impact</strong><p>${renderInline(databaseChanges)}</p></div><div><strong>API impact</strong><p>${renderInline(apiChanges)}</p></div></div>
+      <div class="contract-impact"><div><strong>Database impact</strong><p>${renderInline(databaseChanges)}</p></div><div><strong>API impact</strong><p>${renderInline(apiChanges)}</p></div><div><strong>Flow impact</strong><p>${renderInline(flowImpact)}</p></div></div>
       <div class="expected-result">${renderTechnicalBlock(blocks.get("expected result"), "Expected result")}</div>
       ${databaseDetail}
-      <p class="reason"><strong>Why</strong>${renderInline(getField(change, "Reason"))}</p>
+      <p class="reason"><strong>Why</strong><span class="reason-copy">${renderInline(getField(change, "Reason"))}</span></p>
     </article>`;
   }).join("\n");
 
-  const applicationFlowCards = applicationFlows.map(renderApplicationFlow).join("\n");
+  const applicationFlowCards = applicationFlows.map((entry) => renderApplicationFlow(entry, phaseContext.current)).join("\n");
+  const contextDescription = phaseContext.contextPhases.length > 0
+    ? `Application flows labeled ${phaseContext.contextPhases.map(renderInline).join(", ")} are future context only and are not authorized by this plan.`
+    : "Every application flow shown here is owned by the current executable phase.";
 
   const taskCards = tasks.map((task, index) => `<article class="task-card">
     <div class="task-index">${String(index + 1).padStart(2, "0")}</div>
@@ -459,6 +504,7 @@ function renderPlan(validation, evidenceRegistry) {
       <div class="eyebrow">Phasecraft plan / execution cockpit</div>
       <h1>${escapeHtml(document.title?.text ?? "Phasecraft plan")}</h1>
       <div class="hero-copy">${renderContent(goal.content)}</div>
+      <div class="phase-scope-banner" data-executable-phase="${escapeHtml(phaseContext.current ?? "unspecified")}"><div class="phase-scope-marker"><small>Current executable phase</small><strong>${phaseContext.current ? renderInline(phaseContext.current) : "Not declared"}</strong></div><div class="phase-scope-copy"><strong>This document authorizes ${phaseContext.current ? renderInline(phaseContext.current) : "one declared phase"} only.</strong><p>${contextDescription}</p></div></div>
       <div class="metric-row">
         ${metric("tasks", String(tasks.length), "ordered for execution")}
         ${metric("changes", String(changes.length), "before / after deltas")}
@@ -470,7 +516,7 @@ function renderPlan(validation, evidenceRegistry) {
   <main class="plan-main" data-view="execution-cockpit">
     <section class="plan-section brief-section">
       <div class="section-heading"><span>00</span><div><p>Grounding</p><h2>Inputs and constraints</h2></div></div>
-      <div class="brief-grid"><div><h3>Evidence inputs</h3>${renderContent(inputs.content)}</div><div><h3>Requirements</h3>${requirements.map((requirement) => `<p class="brief-requirement"><span>${renderInline(requirement.id)}</span>${renderInline(requirement.text)}</p>`).join("")}</div></div>
+      <div class="brief-grid"><div><h3>Evidence inputs</h3>${renderContent(inputs.content)}</div><div><h3>Requirements</h3>${requirements.map((requirement) => `<p class="brief-requirement"><span>${renderInline(requirement.id)}</span><span class="brief-requirement-copy">${renderInline(requirement.text)}</span></p>`).join("")}</div></div>
     </section>
     <section class="plan-section">
       <div class="section-heading"><span>01</span><div><p>Behavior delta</p><h2>Change blueprint</h2></div></div>
@@ -577,6 +623,7 @@ footer { padding-block: 1.25rem 2.5rem; font: 500 .72rem/1.5 "SFMono-Regular", C
   .metric { min-height: 96px; padding: .85rem; }
   .diagram-heading { align-items: flex-start; flex-direction: column; }
   .reference-intro { align-items: flex-start; flex-direction: column; }
+  .roadmap-scope-banner { grid-template-columns: 1fr; align-items: start; }
 }
 @media print {
   body { background: white !important; color: black !important; }
@@ -591,6 +638,10 @@ body.roadmap { color: #dbeafe; background-color: #07111f; background-image: line
 .roadmap-hero { color: #eff6ff; background: radial-gradient(circle at 82% 15%, rgba(34,211,238,.2), transparent 34%), linear-gradient(135deg, #0f1b35, #07111f 70%); border-bottom: 1px solid #203452; }
 .roadmap-hero .eyebrow { color: #67e8f9; }
 .roadmap-hero .hero-copy { color: #a9bed8; }
+.roadmap-scope-banner { display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: center; max-width: 820px; margin-top: 1.5rem; padding: 1rem; border: 1px solid #28516d; border-radius: 14px; background: rgba(8,47,73,.46); }
+.roadmap-scope-banner > span { padding: .42rem .62rem; border-radius: 999px; color: #083344; background: #67e8f9; font: 850 .68rem/1 "SFMono-Regular", Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; }
+.roadmap-scope-banner strong { display: block; color: #ecfeff; }
+.roadmap-scope-banner p { margin: .3rem 0 0; color: #a5d8e8; line-height: 1.5; }
 .roadmap-hero .metric-row { border: 1px solid #28415f; background: #28415f; }
 .roadmap-hero .metric { background: rgba(7,17,31,.86); }
 .roadmap-hero .metric strong { color: #67e8f9; }
@@ -631,6 +682,7 @@ body.roadmap { color: #dbeafe; background-color: #07111f; background-image: line
 .roadmap-risk > div > span { color: #fdba74; }
 .roadmap-risk p { display: grid; grid-template-columns: 110px 1fr; gap: .6rem; margin: .8rem 0 0; color: #d7c0c2; font-size: .8rem; line-height: 1.45; }
 .roadmap-risk strong { color: #fb923c; font-size: .68rem; letter-spacing: .08em; text-transform: uppercase; }
+.roadmap-risk-copy { min-width: 0; }
 .unknown-panel { padding: 1.2rem; border: 1px solid #5b4b29; border-radius: 14px; color: #fde68a; background: rgba(66,48,13,.4); line-height: 1.55; }
 .roadmap .empty-state { border-color: #31506e; color: #8ca8c4; }
 .roadmap .empty-state.resolved { color: #a7f3d0; border-color: #166534; }
@@ -648,6 +700,14 @@ body.plan { color: #1c1917; background: #f4efe5; }
 .plan-hero { color: #fafaf9; background: radial-gradient(circle at 78% 14%, rgba(167,139,250,.32), transparent 34%), linear-gradient(135deg, #241b3d, #151322 72%); }
 .plan-hero .eyebrow { color: #c4b5fd; }
 .plan-hero .hero-copy { color: #d6d3e4; }
+.phase-scope-banner { display: grid; grid-template-columns: minmax(170px, auto) 1fr; gap: 1rem; align-items: stretch; max-width: 920px; margin-top: 1.5rem; overflow: hidden; border: 1px solid #6d5a91; border-radius: 16px; background: rgba(15,23,42,.58); }
+.phase-scope-marker { display: flex; justify-content: center; flex-direction: column; padding: 1rem; background: linear-gradient(135deg, #6d28d9, #4338ca); }
+.phase-scope-marker small { margin-bottom: .45rem; color: #ddd6fe; font: 800 .62rem/1.2 "SFMono-Regular", Consolas, monospace; letter-spacing: .1em; text-transform: uppercase; }
+.phase-scope-marker > strong { color: #fff; font-size: 1.4rem; }
+.phase-scope-marker .identity { padding: 0; color: inherit; background: transparent; font-size: inherit; }
+.phase-scope-copy { min-width: 0; padding: 1rem; }
+.phase-scope-copy > strong { display: block; color: #f5f3ff; font-size: 1rem; }
+.phase-scope-copy p { margin: .45rem 0 0; color: #d6d3e4; line-height: 1.55; }
 .plan-hero .metric-row { border: 1px solid #51456c; background: #51456c; }
 .plan-hero .metric { background: rgba(21,19,34,.88); }
 .plan-hero .metric strong { color: #ddd6fe; }
@@ -660,6 +720,7 @@ body.plan { color: #1c1917; background: #f4efe5; }
 .brief-grid ul { padding-left: 1.1rem; }
 .brief-grid li, .brief-grid p { line-height: 1.55; }
 .brief-requirement { display: grid; grid-template-columns: auto 1fr; gap: .55rem; }
+.brief-requirement-copy { min-width: 0; }
 .change-stack, .task-stack, .risk-stack, .commit-stack { display: grid; gap: 1rem; }
 .change-card { padding: 1.2rem; border: 1px solid #cfc3b2; border-radius: 16px; background: #fffdf8; box-shadow: 0 12px 36px rgba(66,48,28,.06); }
 .change-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
@@ -695,7 +756,7 @@ body.plan { color: #1c1917; background: #f4efe5; }
 .missing-detail { display: flex; min-height: 118px; align-items: center; justify-content: center; flex-direction: column; gap: .35rem; padding: 1rem; border: 1px dashed #c4b5fd; border-radius: 12px; color: #7c3aed; background: #faf5ff; text-align: center; }
 .missing-detail strong { font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; }
 .missing-detail span { color: #78716c; font-size: .75rem; }
-.contract-impact { display: grid; grid-template-columns: 1fr 1fr; gap: .65rem; margin-top: .8rem; }
+.contract-impact { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .65rem; margin-top: .8rem; }
 .contract-impact > div { padding: .8rem; border: 1px solid #d8cebd; border-radius: 10px; background: #f8f3ea; }
 .contract-impact strong, .database-detail > div:first-child > strong { display: block; margin-bottom: .4rem; color: #7c3aed; font-size: .68rem; letter-spacing: .08em; text-transform: uppercase; }
 .contract-impact p, .database-detail p { margin: 0; color: #57534e; line-height: 1.5; }
@@ -710,7 +771,11 @@ body.plan { color: #1c1917; background: #f4efe5; }
 .application-flow-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: 1rem; color: #fff; background: linear-gradient(135deg, #312e81, #5b21b6); }
 .application-flow-header > div > span { color: #ddd6fe; }
 .application-flow-header h3 { margin: .3rem 0 0; font-size: 1.2rem; }
-.application-flow-header em { flex: 0 0 auto; padding: .35rem .5rem; border: 1px solid #8b5cf6; border-radius: 999px; color: #ede9fe; font-size: .68rem; font-style: normal; font-weight: 800; }
+.flow-phase { display: inline-flex; flex: 0 0 auto; align-items: center; gap: .3rem; padding: .35rem .5rem; border: 1px solid; border-radius: 999px; font-size: .68rem; font-style: normal; font-weight: 800; }
+.flow-phase .identity { padding: 0; color: inherit; background: transparent; font-size: inherit; }
+.flow-phase-current { color: #dcfce7; border-color: #4ade80; background: rgba(20,83,45,.45); }
+.flow-phase-future { color: #fef3c7; border-color: #fbbf24; background: rgba(120,53,15,.48); }
+.application-flow-future { border-color: #f59e0b; }
 .application-flow-meta, .application-flow-delta { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; border-bottom: 1px solid #ddd6fe; background: #ddd6fe; }
 .application-flow-meta > div, .application-flow-delta > div { padding: .85rem 1rem; background: #faf5ff; }
 .application-flow-meta small, .application-flow-delta small, .application-flow-evidence > small { display: block; margin-bottom: .38rem; color: #7c3aed; font-size: .65rem; font-weight: 850; letter-spacing: .09em; text-transform: uppercase; }
@@ -732,6 +797,7 @@ body.plan { color: #1c1917; background: #f4efe5; }
 .application-flow-evidence { padding: .85rem 1rem; border-top: 1px solid #e7ded0; background: #f8f3ea; }
 .reason { display: grid; grid-template-columns: 42px 1fr; gap: .6rem; margin: 1rem 0 0; color: #57534e; line-height: 1.5; }
 .reason strong { color: #7c3aed; font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; }
+.reason-copy { min-width: 0; }
 .table-shell { overflow-x: auto; border: 1px solid #cfc3b2; border-radius: 14px; background: #fffdf8; }
 table { width: 100%; border-collapse: collapse; font-size: .82rem; }
 th, td { padding: .85rem; border-bottom: 1px solid #e7ded0; text-align: left; vertical-align: top; }
@@ -802,6 +868,7 @@ tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
 .plan footer { color: #78716c; }
 @media (max-width: 720px) {
   .brief-grid, .task-meta { grid-template-columns: 1fr; }
+  .phase-scope-banner { grid-template-columns: 1fr; }
   .delta-lane { grid-template-columns: 1fr; }
   .delta-arrow { transform: rotate(90deg); }
   .code-delta, .contract-impact, .database-detail { grid-template-columns: 1fr; }
@@ -837,9 +904,14 @@ export function renderArtifact(kind, source, options = {}) {
   }
 
   const title = validation.document.title?.text ?? `Phasecraft ${kind}`;
+  const phaseContext = kind === "plan" ? planPhaseContext(validation.document, options.phase) : null;
+  const artifactScope = kind === "roadmap" ? "all-phases" : "single-phase";
+  const browserTitle = kind === "roadmap"
+    ? `All Phases · ${title} · Phasecraft Roadmap`
+    : planBrowserTitle(title, phaseContext.current);
   const body = kind === "roadmap"
     ? renderRoadmap(validation, options.evidenceRegistry)
-    : renderPlan(validation, options.evidenceRegistry);
+    : renderPlan(validation, options.evidenceRegistry, { phase: phaseContext.current });
   const hasMermaid = kind === "plan"
     && (validation.document.sections.get("Application Flows")?.entries.length ?? 0) > 0;
   const mermaidRuntime = hasMermaid ? `<script data-phasecraft-renderer="mermaid" src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
@@ -873,12 +945,14 @@ if (window.mermaid) {
 <meta name="phasecraft-source-sha256" content="${validation.sourceHash}">
 <meta name="phasecraft-schema-version" content="${ARTIFACT_SCHEMA_VERSION}">
 <meta name="phasecraft-view" content="${kind === "roadmap" ? "roadmap-atlas" : "execution-cockpit"}">
-<title>${escapeHtml(title)}</title>
+<meta name="phasecraft-artifact-scope" content="${artifactScope}">
+${phaseContext?.current ? `<meta name="phasecraft-executable-phase" content="${escapeHtml(phaseContext.current)}">` : ""}
+<title>${escapeHtml(browserTitle)}</title>
 <style>${stylesFor(kind)}</style>
 </head>
-<body class="${kind}">
+<body class="${kind}" data-artifact-scope="${artifactScope}"${phaseContext?.current ? ` data-executable-phase="${escapeHtml(phaseContext.current)}"` : ""}>
 ${body}
-<footer>Authoritative source: Markdown / schema v${ARTIFACT_SCHEMA_VERSION} / SHA-256 ${validation.sourceHash}</footer>
+<footer>Authoritative source: Markdown / schema v${ARTIFACT_SCHEMA_VERSION} / scope ${artifactScope}${phaseContext?.current ? ` / executable phase ${escapeHtml(phaseContext.current)}` : ""} / SHA-256 ${validation.sourceHash}</footer>
 ${mermaidRuntime}
 </body>
 </html>
@@ -890,7 +964,10 @@ export async function renderArtifactFile(kind, sourcePath, outputPath, options =
   const source = await readFile(sourcePath, "utf8");
   let evidenceRegistry;
   if (options.evidenceFile) evidenceRegistry = JSON.parse(await readFile(options.evidenceFile, "utf8"));
-  const result = renderArtifact(kind, source, { evidenceRegistry });
+  const result = renderArtifact(kind, source, {
+    evidenceRegistry,
+    phase: options.phase ?? (kind === "plan" ? phaseFromPath(sourcePath) : null),
+  });
   await mkdir(path.dirname(outputPath), { recursive: true });
   const temporary = path.join(
     path.dirname(outputPath),

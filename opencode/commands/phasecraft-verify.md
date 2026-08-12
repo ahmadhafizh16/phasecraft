@@ -4,7 +4,7 @@ agent: phasecraft-verifier
 subtask: true
 ---
 
-Load the `phasecraft` skill and perform only Verify for `$ARGUMENTS`. Run the `verify` preflight and transition from `execution_complete` to `verifying`. Independently inspect the actual diff, approved plan version and hash, decisions, evidence, execution log, tests, build/lint checks, negative cases, and baseline exclusions.
+Load the `phasecraft` skill and perform only Verify for `$ARGUMENTS`. Run the `verify` preflight and transition from `execution_complete` to `verifying`. Independently inspect the actual diff, approved plan version and hash, bound PLAN-VERIFICATION dispositions, decisions, evidence, execution log, tests, build/lint checks, negative cases, and baseline exclusions. Verify every accepted-risk guardrail and report whether any accepted risk materialized; do not fail the implementation merely because a still-open deferred finding was intentionally left outside this phase.
 
 Write `VERIFICATION.md` with requirement-by-requirement evidence and findings ordered by severity. Record the outcome through `verification-result`: use `verified` when every required check passes, `verified_pending` with structured pending checks when automatic checks pass but human-only checks remain, and `verification_failed` for any implementation or automatic-check failure. Do not edit application source or rationalize deviations.
 

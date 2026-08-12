@@ -21,6 +21,7 @@ Version 1 artifacts use JSON for machine state and restricted Markdown for revie
 │       │   ├── RESEARCH.md
 │       │   └── EVIDENCE.json
 │       ├── plan/
+│       │   ├── DEFERRED-FINDINGS.md
 │       │   ├── ROADMAP.md
 │       │   ├── roadmap.html
 │       │   └── phases/P-01-<slug>/
@@ -287,29 +288,97 @@ The section may contain `None.` or entries:
 
 Each manual check represents one scenario and renders as one full-width row. Split unrelated scenarios into separate `M-*` entries.
 
+## Plan Verification
+
+`PLAN-VERIFICATION.md` is authoritative for one audit and is bound to the exact active `PLAN.md` SHA-256. It uses these exact top-level sections:
+
+```markdown
+# <work> <phase> Plan Verification
+
+**Outcome:** APPROVED | APPROVED WITH DISPOSITIONS | CHANGES REQUESTED | NEEDS HUMAN DECISION | BLOCKED BY INTEGRITY GATE
+**Plan SHA-256:** <64 lowercase hex>
+
+## Integrity Gate
+- Status: passed | failed
+- Checks: State/revision, authority freshness, restricted validation, evidence identities, HTML source binding, secret scan.
+
+## Findings
+### PV-001: Finding title
+- Classification: active-phase safety/correctness | active-phase completeness | future-phase | artifact quality
+- Severity: critical | high | medium | low | informational
+- Recommendation: fix-now | defer | accept-risk | non-blocking
+- Consequence: Concise execution consequence.
+- Evidence: Exact paths, symbols, commands, or identities.
+
+## Human Q&A
+### Q-001: Disposition for PV-001
+- Findings: PV-001
+- Question: Is this required before current-phase execution?
+- Auditor recommendation: fix-now
+- Answer: fix-now | defer | accept-risk | non-blocking | pending
+- Human rationale: Exact answer or pending.
+- Owner/trigger: P-02 | before production migration | none
+- Guardrails: Concrete execution constraints or none.
+- Plan SHA-256: <same exact hash>
+
+## Execution Gate
+- Status: approved | blocked
+- Reason: Concise result derived from integrity and Q&A.
+- Accepted-risk guardrails: Q-001 or none.
+- Deferred findings: DF-P01-PV001-<hash-prefix> or none.
+- Next action: Exact legal Phasecraft command.
+```
+
+An auditor may group findings in one Q&A only when they share one disposition, owner/trigger, and guardrail set. Integrity failures are not Q&A choices. Every semantic finding appears in exactly one Q&A. `plan_verified` is legal only when integrity passed, no answer is `fix-now` or `pending`, and every Q&A hash equals the current plan hash.
+
+## Deferred Findings
+
+`plan/DEFERRED-FINDINGS.md` is the durable cross-phase backlog for human-deferred audit findings. It is not a duplicate list of accepted risks or non-blocking observations.
+
+```markdown
+# Deferred Plan Findings
+
+### DF-P01-PV001-a1b2c3d4: Finding title
+- Source: plan/phases/P-01-<slug>/PLAN-VERIFICATION.md#pv-001
+- Bound plan SHA-256: <64 lowercase hex>
+- Classification: active-phase completeness | future-phase | artifact quality
+- Description: Preserved finding.
+- Human rationale: Why current execution may proceed.
+- Owner/trigger: P-02 | before production migration | when <condition>
+- Guardrails: Constraints that apply until resolved.
+- Status: open | resolved | obsolete
+- Resolution: none | evidence and closing plan/verification path
+```
+
+IDs are stable and combine source phase, finding ID, and the first eight characters of the bound plan hash. Plan reads this artifact on every phase start, brings due entries into the active plan, and preserves not-yet-due entries. Entries are closed only with resolution evidence; replanning does not silently erase them.
+
 ## HTML Derivative
 
 `roadmap.html` and `plan.html` are generated in both artifact modes with escaped source text. They do not share one generic card layout. The roadmap remains script-free; a plan containing application flows loads pinned Mermaid `11.4.1` from jsDelivr and retains readable Mermaid source if loading fails.
 
-- `roadmap.html` uses the `roadmap-atlas` view: phase topology, statuses, requirement ownership, exit evidence, strategic risks, open unknowns, and evidence references.
-- `plan.html` uses the `execution-cockpit` view: syntax-highlighted technical before/after code and expected results, Mermaid BEFORE/AFTER application-flow comparisons, surgical node-to-file/symbol tables, database/API impact, migration and rollback detail, requirement coverage, task queue, file impact, risk controls, row-based manual checks, commit groups, and evidence references.
+- `roadmap.html` uses the `roadmap-atlas` view: a visible whole-work/all-phases scope banner, phase topology, statuses, requirement ownership, exit evidence, strategic risks, open unknowns, and evidence references.
+- `plan.html` uses the `execution-cockpit` view: a visible current-executable-phase banner, an explicit single-phase authorization statement, current-versus-future context labels on application flows, syntax-highlighted technical before/after code and expected results, Mermaid BEFORE/AFTER comparisons, surgical node-to-file/symbol tables, database/API/flow impact panels, migration and rollback detail, requirement coverage, task queue, file impact, risk controls, row-based manual checks, commit groups, and evidence references.
 - Every rendered evidence identity links to a deterministic reference card containing its registry claim, source locator, source kind, and status.
 - A deterministic inline SVG dependency graph appears when there is more than one phase/task or an explicit dependency. A single unrelated item remains diagram-free.
 - Diagram nodes and edges are derived only from validated identifiers and `Depends on` fields; the renderer never invents relationships.
 - Mermaid diagrams are derived only from validated `Application Flows` entries, run with strict security, and use the Markdown hash as a deterministic ID seed. Generated SVG is derivative and never authoritative.
+
+Planner and plan-auditor acceptance is source-based: run the restricted validator, generate the derivative, and inspect its deterministic metadata, source hash, required structural markers, Mermaid runtime binding, and readable fallback source. Agents do not run Playwright, browser automation, screenshot comparison, or rendered-SVG checks. A human may open the derivative and request a later visual revision; absence of that browser observation does not block plan approval.
 
 The head includes:
 
 ```html
 <meta name="phasecraft-source-sha256" content="<source SHA-256>">
 <meta name="phasecraft-schema-version" content="1">
+<meta name="phasecraft-artifact-scope" content="all-phases | single-phase">
+<meta name="phasecraft-executable-phase" content="P-01">
 ```
 
-Generation includes no timestamp or random identifier. The same Markdown and evidence registry produce byte-identical output. HTML is never authoritative.
+`phasecraft-executable-phase` appears only on plans and is derived from the phase directory or plan title. Plan browser titles start with `P-NN`; roadmap titles start with `All Phases`. Generation includes no timestamp or random identifier. The same Markdown, phase identity, and evidence registry produce byte-identical output. HTML is never authoritative.
 
 ## Plan Versions
 
-The active files retain `PLAN.md` and `plan.html`. Before a material replan, `archive-plan` copies both into `versions/vN/`, verifies that HTML is bound to the current Markdown hash, writes `SUPERSEDED.json`, and changes archived files to mode `0444`.
+The active files retain `PLAN.md` and `plan.html` inside their phase-specific `P-NN-<slug>/` directory; a later phase uses a different directory and cannot overwrite them. Before a material replan, `archive-plan` copies both into that phase's `versions/vN/`, verifies that HTML is bound to the current Markdown hash, writes `SUPERSEDED.json`, and changes archived files to mode `0444`.
 
 ## Durable Agent Handoffs
 

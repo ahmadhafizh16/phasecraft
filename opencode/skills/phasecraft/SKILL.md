@@ -78,14 +78,21 @@ Every `F-*` declares `Surface`, real `Entry point`, owning `Phase`, evidence-bac
 
 Every manual check is one executable scenario. Its instructions include preconditions, exact command/action, safe environment/data, inspection point, and cleanup when applicable; its expected result names observable output and failure conditions.
 
+## Plan Verification Dispositions
+
+Verify Plan preserves independent findings without requiring a perfect plan. Non-waivable integrity failures are limited to conditions that prevent trustworthy approval binding: illegal workflow state/revision, stale or missing confirmed authority, restricted artifact validation failure, missing active plan, unresolved evidence identity, plan/HTML hash mismatch, or exposed secrets/credentials. Other findings are engineering judgments classified as active-phase safety/correctness, active-phase completeness, future-phase, or artifact quality.
+
+The auditor asks the human to disposition each semantic finding as `fix-now`, `defer`, `accept-risk`, or `non-blocking`. Answers are never inferred. `defer` requires an owner phase/trigger and guardrails and is persisted in `plan/DEFERRED-FINDINGS.md`; `accept-risk` requires rationale and execution guardrails. `PLAN-VERIFICATION.md` binds all findings and Q&A answers to the exact PLAN SHA-256. The phase may become `plan_verified` when integrity passes, all findings are answered, and none remain `fix-now` or `pending`. Executor and verifier honor accepted-risk guardrails, while later Plan stages revisit deferred entries only when due.
+
 ## HTML Visualization Contract
 
 Markdown remains authoritative and agents never hand-edit HTML. Render `roadmap` and `plan` as different information products:
 
-- Roadmap view: strategic phase atlas with status, dependencies, requirement ownership, exit evidence, risks, unknowns, and an evidence reference index.
-- Plan view: implementation review cockpit with syntax-highlighted before/proposed code and expected results, Mermaid BEFORE/AFTER application-flow comparisons, surgical node-to-file/symbol mappings, database/API impact, migration and rollback detail, requirement coverage, ordered tasks, file impact, risk controls, one full-width row per manual check, commit groups, and an evidence reference index.
+- Roadmap view: strategic phase atlas visibly labeled as whole-work/all-phases context, with status, dependencies, requirement ownership, exit evidence, risks, unknowns, and an evidence reference index.
+- Plan view: implementation review cockpit visibly labeled with the current executable `P-NN` and the statement that it authorizes only that phase. Label each application flow as `Current phase` or `Future context`, then show syntax-highlighted before/proposed code and expected results, Mermaid BEFORE/AFTER comparisons, surgical node-to-file/symbol mappings, database/API/flow impact panels, migration and rollback detail, requirement coverage, ordered tasks, file impact, risk controls, one full-width row per manual check, commit groups, and an evidence reference index.
 - Every rendered `E-*`, `D-*`, `P-*`, `U-*`, and `R-*` identity links to its registry claim, provenance, and status. Missing references remain validation errors rather than unexplained labels.
 - Syntax highlighting and flow diagrams are derived only from fenced authoritative Markdown and safely escaped. The generated plan loads a pinned Mermaid browser renderer and preserves readable Mermaid source when that dependency is unavailable. Agents never hand-author generated SVG or HTML.
+- Planner and auditor agents validate Mermaid source through the restricted artifact validator and inspect generated HTML structurally for deterministic metadata, source binding, required panels, runtime markup, and fallback source. They do not use Playwright, browser automation, screenshots, or rendered-SVG checks. Visual layout is human-reviewed and may produce a later revision request.
 - Add a native dependency diagram when multiple phases/tasks or explicit dependencies make sequence hard to understand. Omit diagrams for a single unrelated item or when they add no information.
 - Diagram labels come only from validated structured fields. Do not invent nodes, dependencies, or progress.
 - Keep labels concise; put detailed reasoning in the accompanying cards and tables.

@@ -89,16 +89,47 @@ test("planning prompts require implementation-readable HTML source material", as
     /persistence.*external/iu,
     /one full-width row/iu,
     /syntax-highlight/iu,
+    /current executable `P-NN`/iu,
+    /Future context/u,
   ]) {
     assert.match(plan, pattern);
   }
-  assert.match(verify, /rendered Mermaid BEFORE\/AFTER/u);
+  assert.match(verify, /validator-accepted Mermaid BEFORE\/AFTER/u);
   assert.match(verify, /surgical change-point tables/iu);
   assert.match(verify, /concrete expected-result panels/iu);
+  assert.match(verify, /phase-specific.*<title>/iu);
   assert.match(verify, /row per manual check/u);
+  assert.match(plan, /Do not use Playwright, browser automation/iu);
+  assert.match(verify, /Do not use Playwright, browser automation/iu);
+  assert.match(verify, /visual layout review belongs to the human/iu);
   assert.match(skill, /Every `F-\*` declares/u);
   assert.match(skill, /pinned Mermaid browser renderer/u);
+  assert.match(skill, /They do not use Playwright, browser automation/iu);
   assert.match(skill, /deterministic token spans/u);
+  assert.match(skill, /authorizes only that phase/iu);
   assert.match(skill, /handoff-write --work <id>/u);
   assert.match(skill, /Never allocate a sequence/iu);
+});
+
+test("plan verification returns semantic findings to human disposition", async () => {
+  const verify = await readFile(path.join(root, "opencode", "commands", "phasecraft-verify-plan.md"), "utf8");
+  const auditor = await readFile(path.join(root, "opencode", "agents", "phasecraft-plan-auditor.md"), "utf8");
+  const plan = await readFile(path.join(root, "opencode", "commands", "phasecraft-plan.md"), "utf8");
+  const execute = await readFile(path.join(root, "opencode", "commands", "phasecraft-execute.md"), "utf8");
+  const skill = await readFile(path.join(root, "opencode", "skills", "phasecraft", "SKILL.md"), "utf8");
+
+  assert.match(verify, /non-waivable integrity gate/iu);
+  assert.match(verify, /Never silently decide that a semantic finding blocks execution/iu);
+  for (const choice of ["Fix now", "Defer", "Accept risk for speed", "Non-blocking"]) {
+    assert.match(verify, new RegExp(choice, "iu"));
+  }
+  assert.match(verify, /question tool/iu);
+  assert.match(verify, /plan\/DEFERRED-FINDINGS\.md/u);
+  assert.match(verify, /APPROVED WITH DISPOSITIONS/u);
+  assert.match(verify, /exact PLAN SHA-256/u);
+  assert.match(auditor, /Future-phase detail is deferred by default/iu);
+  assert.match(auditor, /do not.*infer acceptance/iu);
+  assert.match(plan, /read every open entry/iu);
+  assert.match(execute, /accepted-risk guardrail/iu);
+  assert.match(skill, /The phase may become `plan_verified`/iu);
 });

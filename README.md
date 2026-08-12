@@ -37,7 +37,7 @@ AI-assisted implementation becomes risky when context, assumptions, code changes
 | Approval means “roughly this” | Ship approval is bound to exact files, diffs, checks, and messages |
 | Agents push work immediately | Phasecraft creates local commits only and never pushes |
 
-Phasecraft is intentionally local and inspectable. The semantic work lives in OpenCode agents; deterministic state, Git, validation, and rendering operations live in plain Node.js modules. Generated application-flow diagrams use a pinned Mermaid browser renderer.
+Phasecraft is intentionally local and inspectable. The semantic work lives in OpenCode agents; deterministic state, Git, validation, and rendering operations live in plain Node.js modules. Generated application-flow diagrams use a pinned Mermaid browser renderer. Agents validate diagram source and generated HTML structure without Playwright or browser automation; humans own visual review and can request artifact revisions.
 
 <a id="quick-start"></a>
 
@@ -134,7 +134,7 @@ flowchart LR
 | `/phasecraft-new-work` | Create each later feature or task with a fresh baseline. |
 | `/phasecraft-discuss` | Establish scope, decisions, evidence, risks, proposals, and unknowns. |
 | `/phasecraft-plan` | Maintain the roadmap and detail only the next executable phase. |
-| `/phasecraft-verify-plan` | Independently audit evidence, dependencies, risks, and requirement coverage. |
+| `/phasecraft-verify-plan` | Independently audit the plan, then ask you to fix, defer, accept, or mark each semantic finding non-blocking. |
 | `/phasecraft-execute` | Execute the entire approved phase without committing. |
 | `/phasecraft-verify` | Independently compare decisions, plan, implementation, and checks. |
 | `/phasecraft-ship` | Preview and create exact approved local commit groups. Never push. |
@@ -155,6 +155,8 @@ Phasecraft never silently promotes a claim into a fact.
 | `R-*` | Risk with impact, mitigation, possible solution, and evidence | `R-002` covers duplicate side effects |
 
 Execution-critical `U-*` references block plan approval. Current-state technical descriptions require `E-*`; future states stay labeled `PROPOSED` or cite `P-*`.
+
+Verify Plan does not require a perfect first plan. Mechanical integrity failures remain non-waivable, but engineering findings return to you as Q&A. You can request a fix now, defer the item to a named phase or trigger, accept the risk for speed with explicit guardrails, or record it as non-blocking. The exact-plan-hash decisions remain in `PLAN-VERIFICATION.md`; deferred work remains visible in `plan/DEFERRED-FINDINGS.md` until its trigger is due and resolution is recorded.
 
 ## 🗂️ Project Artifacts
 
@@ -179,6 +181,7 @@ Reviewable artifacts and private runtime state remain separated:
 │   │   ├── RESEARCH.md
 │   │   └── EVIDENCE.json
 │   ├── plan/
+│   │   ├── DEFERRED-FINDINGS.md
 │   │   ├── ROADMAP.md
 │   │   ├── roadmap.html
 │   │   └── phases/P-01-<slug>/
@@ -202,7 +205,7 @@ Reviewable artifacts and private runtime state remain separated:
 | `local` | Adds `/.phasecraft/` to the repository-local `.git/info/exclude`. |
 | `reviewable` | Excludes only `/.phasecraft/.local/`; decisions, evidence, plans, and verification can be reviewed or committed manually. |
 
-Markdown is authoritative. `roadmap.html` is a strategic phase atlas, while `plan.html` is an implementation review cockpit for syntax-highlighted before/proposed code and concrete expected results, Mermaid BEFORE/AFTER application-flow comparisons, surgical node-to-file/symbol mappings, database/API impact, migration and rollback detail, requirement coverage, task flow, file impact, risks, row-based manual checks, and commits. Evidence identities link to reference cards with their claim, provenance, and status. Both views are escaped and bound to their Markdown SHA-256. Plans with application flows load pinned Mermaid `11.4.1` from jsDelivr and preserve readable diagram source as fallback.
+Markdown is authoritative. `roadmap.html` is a strategic phase atlas, while `plan.html` is an implementation review cockpit for syntax-highlighted before/proposed code and concrete expected results, Mermaid BEFORE/AFTER application-flow comparisons, surgical node-to-file/symbol mappings, database/API/flow impact, migration and rollback detail, requirement coverage, task flow, file impact, risks, row-based manual checks, and commits. The roadmap visibly declares whole-work/all-phase scope. Every plan visibly declares its current executable `P-NN`, states that it authorizes only that phase, and labels other phase-owned flows as future context. Phase plans retain canonical filenames but live in separate `P-NN-<slug>/` directories, so later plans never overwrite earlier ones. Evidence identities link to reference cards with their claim, provenance, and status. Both views are escaped and bound to their Markdown SHA-256. Plans with application flows load pinned Mermaid `11.4.1` from jsDelivr and preserve readable diagram source as fallback.
 
 Every Phasecraft agent invocation also writes an immutable, atomically sequenced `handoffs/<agent>/H-NNN.md`. Handoffs preserve exact navigation and resume context across repeated agent rounds, but never replace evidence, plans, state, execution records, or verification artifacts.
 
