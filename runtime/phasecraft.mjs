@@ -102,7 +102,7 @@ function help() {
       "baseline-clean": "Confirm cleaned baseline-dirty files before execution",
       adopt: "Adopt baseline-dirty files into the work item",
       snapshot: "Write a cumulative task recovery patch",
-      "archive-plan": "Archive an immutable approved plan version",
+      "archive-plan": "Archive an immutable audited plan version",
       "ship-preview": "Create an exact fingerprinted Ship preview",
       ship: "Execute an exactly approved Ship preview",
       "knowledge-candidates": "List known project authority candidates and source hashes",

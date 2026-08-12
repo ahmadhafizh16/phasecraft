@@ -65,7 +65,7 @@ The plan auditor runs in an independent OpenCode subtask. It validates:
 
 - Current authority and evidence hashes.
 - Every requirement and its observable checks.
-- At least two semicolon-separated observations for each task.
+- Observable requirement checks; fewer than two observations are a completeness warning for human disposition.
 - Before-state evidence and proposal labels.
 - Concrete expected output snapshots and complete representative database/API results.
 - Evidence-backed surgical mappings for every behavior-changing AFTER node.
@@ -74,15 +74,17 @@ The plan auditor runs in an independent OpenCode subtask. It validates:
 - Dirty baseline overlap and unrelated scope.
 - The HTML source hash.
 
-Verify Plan separates non-waivable integrity failures from semantic engineering findings. Integrity failures are limited to conditions that prevent trustworthy approval binding: illegal state/revision, stale or missing confirmed authority, restricted-schema validation errors, a missing active plan, unresolved evidence identities, plan/HTML source-hash mismatch, or exposed secrets/credentials. They leave the work in `plan_draft` and cannot be waived through Q&A.
+Verify Plan separates non-waivable integrity failures from semantic engineering findings. Integrity failures are limited to conditions that prevent trustworthy approval binding: illegal state/revision, a missing active plan, structural schema failures that prevent deterministic parsing or make identities ambiguous, plan/HTML source-hash mismatch, or exposed secrets/credentials. Stale/missing authority, stale/weak/conflicting evidence, unresolved provenance, insufficient checks, and incomplete engineering detail are semantic findings. Integrity failures leave the work in `plan_draft` and cannot be waived through Q&A.
 
-Every other finding is classified as active-phase safety/correctness, active-phase completeness, future-phase, or artifact quality. The auditor recommends a disposition but asks the human to choose `fix-now`, `defer`, `accept-risk`, or `non-blocking`. Deferred findings require an owner phase or trigger and remain open in `plan/DEFERRED-FINDINGS.md`; accepted risks require execution guardrails. `PLAN-VERIFICATION.md` preserves all findings and Q&A decisions bound to the exact plan SHA-256. No answer is inferred from silence or urgency.
+Every other finding is classified as active-phase safety/correctness, active-phase completeness, future-phase, or artifact quality. The auditor recommends a disposition but asks the human to choose `fix-now`, `defer`, `accept-risk`, or `non-blocking`. Deferred findings require an owner phase or trigger and remain open in `plan/DEFERRED-FINDINGS.md`. Accepted risks require rationale but may explicitly have no mitigation or guardrails; they remain in `plan/RISK-REGISTER.md` with a materialization signal and revisit trigger. `PLAN-VERIFICATION.md` preserves all findings and Q&A decisions bound to the exact plan SHA-256. No answer is inferred from silence or urgency.
+
+The first plan audit covers the active phase end to end once. A repeated audit uses the immediately preceding immutable plan and verification to compare stable semantic identities. It reruns integrity checks, then reviews changed anchors, direct dependencies, changed evidence, unresolved prior findings, and due triggers. Unchanged accepted, deferred, and non-blocking dispositions are not reopened individually; one explicit human confirmation binds their carried copies to the new plan hash. A full semantic audit is repeated only when exact prior artifacts or a trustworthy impact set are unavailable.
 
 The audit transitions to `plan_verified` when integrity passes, every semantic finding has a human disposition, and none remain `fix-now` or `pending`. Its outcome is `APPROVED` when there were no findings or `APPROVED WITH DISPOSITIONS` otherwise. `fix-now`, pending Q&A, and integrity failures retain `plan_draft` as `CHANGES REQUESTED`, `NEEDS HUMAN DECISION`, and `BLOCKED BY INTEGRITY GATE`, respectively. This permits deliberate speed without hiding risk or requiring a perfect first plan.
 
 ### Execute
 
-Execute verifies the approved plan revision and its exact-hash-bound verification dispositions, then runs the entire phase in dependency order. It edits only approved source files, records commands and observations, carries accepted-risk guardrails into execution evidence, and writes a cumulative patch after each completed task. Deferred findings remain outside current scope until their owner phase or trigger is due.
+Execute verifies the approved plan revision and its exact-hash-bound verification dispositions, then runs the entire phase in dependency order. It edits only approved source files, records commands and observations, carries accepted-risk guardrails into execution evidence when present, observes accepted-risk materialization signals, and writes a cumulative patch after each completed task. Explicit no-mitigation/no-guardrail acceptance does not block execution. Deferred findings remain outside current scope until their owner phase or trigger is due.
 
 New scope, files, architecture, dependencies, public APIs, schemas, or security behavior are material deviations. Execute stops, archives the current plan, returns to `plan_draft`, and requires a new audit. Minor evidence-backed implementation details are logged without rewriting the approved plan.
 
@@ -126,7 +128,7 @@ Conversation history is not workflow authority. After work resolution, every man
 | `U-*` | Unresolved unknown with a follow-up. |
 | `R-*` | Risk with impact, mitigation, possible solution, and supporting evidence. |
 
-Execution-critical `U-*` references block plan approval. Current-state `Before` fields require `E-*`. Future-state fields include `PROPOSED` or `P-*`.
+Execution-critical `U-*` references and current-state `Before` fields without `E-*` produce semantic findings for human disposition rather than structural validation failures. Future-state fields include `PROPOSED` or `P-*`.
 
 ## State Machine
 

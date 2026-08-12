@@ -100,17 +100,17 @@ test("reports runtime flow impact without an application flow section", () => {
   assert.equal(result.warnings.some(({ code }) => code === "APPLICATION_FLOW_MISSING"), true);
 });
 
-test("rejects missing fields and missing evidence references", () => {
+test("rejects missing fields and warns on missing evidence references", () => {
   const invalid = validPlan
     .replace("- Files: src/session.mjs, test/session.test.mjs\n- Change:", "- Change:")
     .replace("E-001, D-001, P-001", "E-404, D-001, P-001");
   const result = validatePlan(invalid, { evidenceRegistry });
   assert.equal(result.valid, false);
   assert.equal(result.errors.some(({ code }) => code === "FIELD_MISSING"), true);
-  assert.equal(result.errors.some(({ code }) => code === "REFERENCE_MISSING"), true);
+  assert.equal(result.warnings.some(({ code }) => code === "REFERENCE_MISSING"), true);
 });
 
-test("enforces requirement coverage and two observable checks", () => {
+test("enforces requirement references and warns on insufficient observations", () => {
   const unknown = validatePlan(validPlan.replace("- Requirements: REQ-001", "- Requirements: REQ-999"), {
     evidenceRegistry,
   });
@@ -124,8 +124,33 @@ test("enforces requirement coverage and two observable checks", () => {
     ),
     { evidenceRegistry },
   );
-  assert.equal(undersampled.valid, false);
-  assert.equal(undersampled.errors.some(({ code }) => code === "NYQUIST_INSUFFICIENT"), true);
+  assert.equal(undersampled.valid, true);
+  assert.equal(undersampled.warnings.some(({ code }) => code === "NYQUIST_INSUFFICIENT"), true);
+});
+
+test("reports unsupported before states and unresolved task evidence as semantic warnings", () => {
+  const registryWithUnknown = {
+    ...evidenceRegistry,
+    entries: [
+      ...evidenceRegistry.entries,
+      {
+        id: "U-001",
+        type: "unknown",
+        claim: "The current task behavior is not independently confirmed.",
+        source: { kind: "planning", locator: "T-001" },
+        status: "open",
+      },
+    ],
+  };
+  const unsupported = validatePlan(
+    validPlan
+      .replace("- Before: E-001", "- Before: Current behavior is not independently confirmed.")
+      .replace("- Evidence: E-001, D-001, P-001\n- Depends on: none", "- Evidence: U-001, D-001, P-001\n- Depends on: none"),
+    { evidenceRegistry: registryWithUnknown },
+  );
+  assert.equal(unsupported.valid, true, JSON.stringify(unsupported.errors));
+  assert.equal(unsupported.warnings.some(({ code }) => code === "BEFORE_EVIDENCE_MISSING"), true);
+  assert.equal(unsupported.warnings.some(({ code }) => code === "TASK_UNKNOWN_BLOCKS"), true);
 });
 
 test("rejects unknown sections and duplicate or unknown structured fields", () => {

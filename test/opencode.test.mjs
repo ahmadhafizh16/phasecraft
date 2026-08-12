@@ -127,9 +127,15 @@ test("plan verification returns semantic findings to human disposition", async (
   assert.match(verify, /plan\/DEFERRED-FINDINGS\.md/u);
   assert.match(verify, /APPROVED WITH DISPOSITIONS/u);
   assert.match(verify, /exact PLAN SHA-256/u);
+  assert.match(verify, /repeat\/differential/iu);
+  assert.match(verify, /carry-forward confirmation/iu);
+  assert.match(verify, /Guardrails: none/iu);
+  assert.match(verify, /stop when integrity and the delta are dispositioned/iu);
   assert.match(auditor, /Future-phase detail is deferred by default/iu);
+  assert.match(auditor, /do not plan again from zero/iu);
   assert.match(auditor, /do not.*infer acceptance/iu);
   assert.match(plan, /read every open entry/iu);
+  assert.match(plan, /Refresh only stale sources/iu);
   assert.match(execute, /accepted-risk guardrail/iu);
   assert.match(skill, /The phase may become `plan_verified`/iu);
 });

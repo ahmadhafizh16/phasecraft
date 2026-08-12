@@ -7,7 +7,7 @@
     independent checks, and exact local commits.
   </p>
   <p>
-    <img alt="Version 0.1.0" src="https://img.shields.io/badge/version-0.1.0-6366f1?style=flat-square">
+    <img alt="Version 0.2.0" src="https://img.shields.io/badge/version-0.2.0-6366f1?style=flat-square">
     <img alt="Node.js 20 or newer" src="https://img.shields.io/badge/Node.js-%E2%89%A520-339933?style=flat-square&logo=nodedotjs&logoColor=white">
     <img alt="Mermaid diagrams" src="https://img.shields.io/badge/diagrams-Mermaid-22d3ee?style=flat-square">
     <img alt="OpenCode workflow" src="https://img.shields.io/badge/OpenCode-workflow-111827?style=flat-square">
@@ -154,9 +154,9 @@ Phasecraft never silently promotes a claim into a fact.
 | `U-*` | Unresolved unknown | `U-001` needs provider timeout confirmation |
 | `R-*` | Risk with impact, mitigation, possible solution, and evidence | `R-002` covers duplicate side effects |
 
-Execution-critical `U-*` references block plan approval. Current-state technical descriptions require `E-*`; future states stay labeled `PROPOSED` or cite `P-*`.
+Execution-critical `U-*` references and current-state descriptions without `E-*` become explicit semantic findings. The human may fix, defer, accept, or mark them non-blocking after seeing the consequence. Future states stay labeled `PROPOSED` or cite `P-*`.
 
-Verify Plan does not require a perfect first plan. Mechanical integrity failures remain non-waivable, but engineering findings return to you as Q&A. You can request a fix now, defer the item to a named phase or trigger, accept the risk for speed with explicit guardrails, or record it as non-blocking. The exact-plan-hash decisions remain in `PLAN-VERIFICATION.md`; deferred work remains visible in `plan/DEFERRED-FINDINGS.md` until its trigger is due and resolution is recorded.
+Verify Plan does not require a perfect plan. Approval-binding failures remain non-waivable, but stale evidence, missing checks, incomplete detail, and other engineering risks return to you as Q&A. You can request a fix now, defer the item to a named phase or trigger, accept the risk with mitigation and guardrails, explicitly accept it with no current mitigation, or record it as non-blocking. Exact-plan-hash decisions remain in `PLAN-VERIFICATION.md`; accepted risks remain in `plan/RISK-REGISTER.md`, and deferred work remains in `plan/DEFERRED-FINDINGS.md` until its trigger is due. After revision, Verify Plan audits changed semantic anchors and affected dependencies, then asks once before carrying unchanged dispositions to the new plan hash.
 
 ## 🗂️ Project Artifacts
 

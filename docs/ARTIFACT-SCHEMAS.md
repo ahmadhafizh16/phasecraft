@@ -22,6 +22,7 @@ Version 1 artifacts use JSON for machine state and restricted Markdown for revie
 │       │   └── EVIDENCE.json
 │       ├── plan/
 │       │   ├── DEFERRED-FINDINGS.md
+│       │   ├── RISK-REGISTER.md
 │       │   ├── ROADMAP.md
 │       │   ├── roadmap.html
 │       │   └── phases/P-01-<slug>/
@@ -31,6 +32,7 @@ Version 1 artifacts use JSON for machine state and restricted Markdown for revie
 │       │       └── versions/v1/
 │       │           ├── PLAN.md
 │       │           ├── plan.html
+│       │           ├── PLAN-VERIFICATION.md
 │       │           └── SUPERSEDED.json
 │       ├── verification/phases/P-01-<slug>/VERIFICATION.md
 │       └── ship/SHIP.md
@@ -93,7 +95,7 @@ Init creates project configuration and the first work directories. New Work crea
 }
 ```
 
-Allowed types and matching prefixes are `evidence/E`, `decision/D`, `proposal/P`, `unknown/U`, and `risk/R`. IDs use at least three digits and are unique. Every entry requires a claim, source kind, source locator, and status. `E-*` requires a source SHA-256.
+Allowed types and matching prefixes are `evidence/E`, `decision/D`, `proposal/P`, `unknown/U`, and `risk/R`. IDs use at least three digits and are unique. Every entry requires a claim, source kind, source locator, and status. `E-*` requires a source SHA-256. A syntactically valid but unregistered identity produces a semantic `REFERENCE_MISSING` warning in a plan so the human may disposition the unsupported claim; an invalid evidence registry remains a structural error.
 
 ## Roadmap Markdown
 
@@ -249,7 +251,7 @@ Application flows describe user-facing or operational behavior, not task order o
 - Commit group: C-001
 ```
 
-Requirements name existing `REQ-*` entries and dependencies name existing `T-*` entries. Execution-critical `U-*` evidence is invalid. Across all tasks covering a requirement, at least two semicolon-separated verification observations are required.
+Requirements name existing `REQ-*` entries and dependencies name existing `T-*` entries. Across all tasks covering a requirement, at least two semicolon-separated verification observations are recommended. Fewer observations produce `NYQUIST_INSUFFICIENT` as a semantic completeness warning for Verify Plan and human disposition; they do not make the plan structurally invalid. Execution-critical `U-*` task evidence produces `TASK_UNKNOWN_BLOCKS` as a semantic warning rather than automatically denying informed human acceptance.
 
 ### Risk
 
@@ -300,7 +302,11 @@ Each manual check represents one scenario and renders as one full-width row. Spl
 
 ## Integrity Gate
 - Status: passed | failed
-- Checks: State/revision, authority freshness, restricted validation, evidence identities, HTML source binding, secret scan.
+- Checks: State/revision, active plan, structural validation, HTML source binding, secret scan.
+- Audit scope: first/full | repeat/differential
+- Compared plan SHA-256: none | <prior exact hash>
+- Changed anchors: all | REQ-001, CH-002, F-001, T-003
+- Carried dispositions: none | Q-001, Q-004
 
 ## Findings
 ### PV-001: Finding title
@@ -319,6 +325,8 @@ Each manual check represents one scenario and renders as one full-width row. Spl
 - Human rationale: Exact answer or pending.
 - Owner/trigger: P-02 | before production migration | none
 - Guardrails: Concrete execution constraints or none.
+- Materialization signal: Observable signal or consequence itself.
+- Revisit trigger: Exact phase, condition, or observed consequence.
 - Plan SHA-256: <same exact hash>
 
 ## Execution Gate
@@ -329,7 +337,7 @@ Each manual check represents one scenario and renders as one full-width row. Spl
 - Next action: Exact legal Phasecraft command.
 ```
 
-An auditor may group findings in one Q&A only when they share one disposition, owner/trigger, and guardrail set. Integrity failures are not Q&A choices. Every semantic finding appears in exactly one Q&A. `plan_verified` is legal only when integrity passed, no answer is `fix-now` or `pending`, and every Q&A hash equals the current plan hash.
+An auditor may group findings in one Q&A only when they share one disposition, owner/trigger, and guardrail set. Integrity failures are not Q&A choices. Every new or changed semantic finding appears in exactly one Q&A. On a repeat/differential audit, unchanged Q&A may be carried after one explicit human confirmation and copied with the current plan hash. `plan_verified` is legal only when integrity passed, no answer is `fix-now` or `pending`, and every Q&A hash equals the current plan hash. `accept-risk` may use `Mitigation: none` and `Guardrails: none` when that is the explicit human choice.
 
 ## Deferred Findings
 
@@ -351,6 +359,28 @@ An auditor may group findings in one Q&A only when they share one disposition, o
 ```
 
 IDs are stable and combine source phase, finding ID, and the first eight characters of the bound plan hash. Plan reads this artifact on every phase start, brings due entries into the active plan, and preserves not-yet-due entries. Entries are closed only with resolution evidence; replanning does not silently erase them.
+
+## Accepted Risk Register
+
+`plan/RISK-REGISTER.md` preserves accepted risks across plan hashes and phases without turning them into deferred implementation commitments.
+
+```markdown
+# Accepted Risk Register
+
+### AR-P01-PV001-a1b2c3d4: Finding title
+- Source: plan/phases/P-01-<slug>/PLAN-VERIFICATION.md#pv-001
+- Bound plan SHA-256: <64 lowercase hex>
+- Description: Preserved risk and consequence.
+- Human rationale: Why execution may proceed.
+- Mitigation: Concrete mitigation or none.
+- Guardrails: Concrete execution constraints or none.
+- Materialization signal: Observable event, result, or the consequence itself.
+- Revisit trigger: P-02 | before production migration | when <condition or consequence is observed>
+- Status: accepted | materialized | resolved | obsolete
+- Observation: none | dated execution/verification evidence
+```
+
+Plan reads the register on each phase start or revision but reopens an accepted risk only when its trigger is due, it materialized, or the human requests reconsideration. Executor and Verifier may mark `materialized` only with observed evidence. A changed plan hash does not erase or silently reopen the entry.
 
 ## HTML Derivative
 
@@ -378,7 +408,7 @@ The head includes:
 
 ## Plan Versions
 
-The active files retain `PLAN.md` and `plan.html` inside their phase-specific `P-NN-<slug>/` directory; a later phase uses a different directory and cannot overwrite them. Before a material replan, `archive-plan` copies both into that phase's `versions/vN/`, verifies that HTML is bound to the current Markdown hash, writes `SUPERSEDED.json`, and changes archived files to mode `0444`.
+The active files retain `PLAN.md` and `plan.html` inside their phase-specific `P-NN-<slug>/` directory; a later phase uses a different directory and cannot overwrite them. Before revising an audited plan, `archive-plan` copies `PLAN.md`, `plan.html`, and the available hash-bound `PLAN-VERIFICATION.md` into that phase's `versions/vN/`, verifies their bindings, writes `SUPERSEDED.json` with all available hashes, and changes archived files to mode `0444`. These exact prior artifacts are the comparison base for differential re-verification.
 
 ## Durable Agent Handoffs
 

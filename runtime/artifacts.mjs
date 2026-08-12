@@ -285,7 +285,7 @@ function validatePlanSemantics(document, errors, warnings) {
   for (const entry of technical?.entries ?? []) {
     const before = entry.fields.get("before")?.value ?? "";
     if (!/\bE-\d{3,}\b/u.test(before)) {
-      errors.push(issue(`${entry.heading} Before must cite repository evidence E-*`, entry.line, "BEFORE_EVIDENCE_MISSING"));
+      warnings.push(issue(`${entry.heading} Before should cite repository evidence E-*`, entry.line, "BEFORE_EVIDENCE_MISSING"));
     }
     const proposed = entry.fields.get("proposed after")?.value ?? "";
     if (!/\bPROPOSED\b/u.test(proposed) && !/\bP-\d{3,}\b/u.test(proposed)) {
@@ -392,7 +392,7 @@ function validatePlanSemantics(document, errors, warnings) {
     if (group && !commitIds.has(group)) errors.push(issue(`${entry.heading} has unknown commit group ${group}`, entry.line));
     const evidence = entry.fields.get("evidence")?.value ?? "";
     if (/\bU-\d{3,}\b/u.test(evidence)) {
-      errors.push(issue(`${entry.heading} depends on unresolved UNKNOWN evidence`, entry.line, "TASK_UNKNOWN_BLOCKS"));
+      warnings.push(issue(`${entry.heading} depends on unresolved UNKNOWN evidence`, entry.line, "TASK_UNKNOWN_BLOCKS"));
     }
     const verification = entry.fields.get("verification")?.value ?? "";
     const checks = verification.split(";").map((value) => value.trim()).filter(Boolean);
@@ -410,7 +410,7 @@ function validatePlanSemantics(document, errors, warnings) {
   }
   for (const [requirement, checks] of requirementChecks) {
     if (checks.length < 2) {
-      errors.push(issue(`${requirement} requires at least two observable verification checks`, requirements?.line, "NYQUIST_INSUFFICIENT"));
+      warnings.push(issue(`${requirement} should have at least two observable verification checks`, requirements?.line, "NYQUIST_INSUFFICIENT"));
     }
   }
   for (const entry of document.sections.get("Commit Groups")?.entries ?? []) {
@@ -483,14 +483,14 @@ export function validateEvidenceRegistry(registry) {
   return { valid: errors.length === 0, errors, ids };
 }
 
-function validateReferences(references, registry, errors) {
+function validateReferences(references, registry, errors, missingReferences = errors) {
   if (!registry) return;
   const result = validateEvidenceRegistry(registry);
   errors.push(...result.errors);
   if (!result.valid) return;
   for (const reference of references) {
     if (!result.ids.has(reference.id)) {
-      errors.push(issue(`Unknown evidence reference ${reference.id} in ${reference.context}`, reference.line, "REFERENCE_MISSING"));
+      missingReferences.push(issue(`Unknown evidence reference ${reference.id} in ${reference.context}`, reference.line, "REFERENCE_MISSING"));
     }
   }
 }
@@ -506,7 +506,7 @@ export function validatePlan(source, options = {}) {
   }
   if (errors.length === 0) validatePlanSemantics(document, errors, warnings);
   const references = collectReferences(document);
-  validateReferences(references, options.evidenceRegistry, errors);
+  validateReferences(references, options.evidenceRegistry, errors, warnings);
   return {
     valid: errors.length === 0,
     kind: "plan",
@@ -570,11 +570,24 @@ export async function archivePlanVersion(phaseDirectory, version, reason) {
   }
   const sourcePlan = path.join(phaseDirectory, "PLAN.md");
   const sourceHtml = path.join(phaseDirectory, "plan.html");
-  const [plan, html] = await Promise.all([readFile(sourcePlan), readFile(sourceHtml)]);
+  const sourceVerification = path.join(phaseDirectory, "PLAN-VERIFICATION.md");
+  const [plan, html, verification] = await Promise.all([
+    readFile(sourcePlan),
+    readFile(sourceHtml),
+    readFile(sourceVerification).catch((cause) => {
+      if (cause.code === "ENOENT") return null;
+      throw cause;
+    }),
+  ]);
   const planHash = sha256(plan);
   if (!html.toString("utf8").includes(`name="phasecraft-source-sha256" content="${planHash}"`)) {
     const error = new Error("plan.html is not bound to the current PLAN.md hash");
     error.code = "PLAN_HTML_STALE";
+    throw error;
+  }
+  if (verification && !verification.toString("utf8").includes(`**Plan SHA-256:** ${planHash}`)) {
+    const error = new Error("PLAN-VERIFICATION.md is not bound to the current PLAN.md hash");
+    error.code = "PLAN_VERIFICATION_STALE";
     throw error;
   }
   const target = path.join(phaseDirectory, "versions", `v${version}`);
@@ -584,15 +597,31 @@ export async function archivePlanVersion(phaseDirectory, version, reason) {
   });
   const targetPlan = path.join(target, "PLAN.md");
   const targetHtml = path.join(target, "plan.html");
-  await Promise.all([copyFile(sourcePlan, targetPlan), copyFile(sourceHtml, targetHtml)]);
+  const targetVerification = path.join(target, "PLAN-VERIFICATION.md");
+  await Promise.all([
+    copyFile(sourcePlan, targetPlan),
+    copyFile(sourceHtml, targetHtml),
+    verification ? copyFile(sourceVerification, targetVerification) : Promise.resolve(),
+  ]);
   await writeFile(path.join(target, "SUPERSEDED.json"), `${JSON.stringify({
     schemaVersion: ARTIFACT_SCHEMA_VERSION,
     version,
     planHash,
     htmlHash: sha256(html),
+    verificationHash: verification ? sha256(verification) : null,
     reason: reason.trim(),
     archivedAt: new Date().toISOString(),
   }, null, 2)}\n`, { flag: "wx", mode: 0o444 });
-  await Promise.all([chmod(targetPlan, 0o444), chmod(targetHtml, 0o444)]);
-  return { version, directory: target, planHash, htmlHash: sha256(html) };
+  await Promise.all([
+    chmod(targetPlan, 0o444),
+    chmod(targetHtml, 0o444),
+    verification ? chmod(targetVerification, 0o444) : Promise.resolve(),
+  ]);
+  return {
+    version,
+    directory: target,
+    planHash,
+    htmlHash: sha256(html),
+    verificationHash: verification ? sha256(verification) : null,
+  };
 }

@@ -267,12 +267,18 @@ test("archives an immutable plan version with bound HTML", async (t) => {
   t.after(() => rm(root, { recursive: true, force: true }));
   const sourcePath = path.join(root, "PLAN.md");
   const outputPath = path.join(root, "plan.html");
+  const verificationPath = path.join(root, "PLAN-VERIFICATION.md");
+  const verification = `# Bound audit\n\n**Plan SHA-256:** ${sha256(validPlan)}\n`;
   const { writeFile } = await import("node:fs/promises");
   await writeFile(sourcePath, validPlan);
   await renderArtifactFile("plan", sourcePath, outputPath);
+  await writeFile(verificationPath, verification);
   const archived = await archivePlanVersion(root, 1, "Material file scope changed");
   assert.equal(archived.planHash, sha256(validPlan));
+  assert.equal(archived.verificationHash, sha256(verification));
   assert.equal(await readFile(path.join(root, "versions", "v1", "PLAN.md"), "utf8"), validPlan);
+  assert.equal(await readFile(path.join(root, "versions", "v1", "PLAN-VERIFICATION.md"), "utf8"), verification);
   const metadata = JSON.parse(await readFile(path.join(root, "versions", "v1", "SUPERSEDED.json"), "utf8"));
   assert.equal(metadata.reason, "Material file scope changed");
+  assert.equal(metadata.verificationHash, archived.verificationHash);
 });
