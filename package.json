@@ -1,18 +1,56 @@
 {
-  "name": "phasecraft",
-  "version": "0.3.0",
-  "description": "Evidence-first, phase-oriented OpenCode workflow",
-  "private": true,
+  "name": "@ahmadhafizh16/phasecraft",
+  "version": "0.4.0",
+  "description": "Evidence-first engineering workflow for OpenCode, Claude Code, Codex, and Pi",
   "type": "module",
+  "license": "MIT",
+  "author": "Ahmad Hafizh",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ahmadhafizh16/phasecraft.git"
+  },
+  "homepage": "https://github.com/ahmadhafizh16/phasecraft#readme",
+  "bugs": {
+    "url": "https://github.com/ahmadhafizh16/phasecraft/issues"
+  },
+  "keywords": [
+    "ai-coding",
+    "agent-workflow",
+    "claude-code",
+    "codex",
+    "opencode",
+    "pi"
+  ],
   "engines": {
     "node": ">=20"
   },
   "bin": {
-    "phasecraft": "./runtime/phasecraft.mjs",
+    "phasecraft": "./bin/phasecraft.mjs",
     "phasecraft-install": "./bin/install.mjs"
+  },
+  "exports": {
+    "./installer": "./bin/install.mjs",
+    "./hosts": "./bin/hosts.mjs",
+    "./runtime/*": "./runtime/*.mjs"
+  },
+  "files": [
+    "bin/",
+    "runtime/",
+    "opencode/",
+    "pi/",
+    "docs/",
+    ".github/assets/phasecraft-mark.svg",
+    "LICENSE",
+    "README.md",
+    "ROADMAP.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "check": "node --check runtime/*.mjs && node --check bin/*.mjs"
+    "check": "node --check runtime/*.mjs && node --check bin/*.mjs",
+    "pack:check": "npm pack --dry-run"
   }
 }

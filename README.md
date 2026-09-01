@@ -3,21 +3,23 @@
   <h1>Phasecraft</h1>
   <p><strong>Evidence-first engineering, one deliberate phase at a time.</strong></p>
   <p>
-    A local OpenCode workflow that turns context into verified plans, controlled execution,
+    A local coding-agent workflow that turns context into verified plans, controlled execution,
     independent checks, and exact local commits.
   </p>
+  <p><strong>One workflow package for OpenCode, Claude Code, Codex, and Pi.</strong></p>
   <p>
-    <img alt="Version 0.3.0" src="https://img.shields.io/badge/version-0.3.0-6366f1?style=flat-square">
+    <img alt="Version 0.4.0" src="https://img.shields.io/badge/version-0.4.0-6366f1?style=flat-square">
+    <img alt="npm package" src="https://img.shields.io/badge/npm-%40ahmadhafizh16%2Fphasecraft-CB3837?style=flat-square&logo=npm&logoColor=white">
     <img alt="Node.js 20 or newer" src="https://img.shields.io/badge/Node.js-%E2%89%A520-339933?style=flat-square&logo=nodedotjs&logoColor=white">
     <img alt="Mermaid diagrams" src="https://img.shields.io/badge/diagrams-Mermaid-22d3ee?style=flat-square">
-    <img alt="OpenCode workflow" src="https://img.shields.io/badge/OpenCode-workflow-111827?style=flat-square">
-    <img alt="Tests passing" src="https://img.shields.io/badge/tests-passing-16a34a?style=flat-square">
+    <img alt="Four coding agent hosts" src="https://img.shields.io/badge/hosts-OpenCode%20%7C%20Claude%20%7C%20Codex%20%7C%20Pi-111827?style=flat-square">
+    <img alt="108 tests passing" src="https://img.shields.io/badge/tests-108%20passing-16a34a?style=flat-square">
   </p>
   <p>
-    <a href="#quick-start">Quick start</a> &middot;
+    <a href="#installation">Installation</a> &middot;
+    <a href="#worked-example">Example</a> &middot;
     <a href="#workflow">Workflow</a> &middot;
     <a href="#safety-model">Safety</a> &middot;
-    <a href="#architecture">Architecture</a> &middot;
     <a href="#documentation">Documentation</a>
   </p>
 </div>
@@ -37,33 +39,79 @@ AI-assisted implementation becomes risky when context, assumptions, code changes
 | Approval means “roughly this” | Ship approval is bound to exact files, diffs, checks, and messages |
 | Agents push work immediately | Phasecraft creates local commits only and never pushes |
 
-Phasecraft is intentionally local and inspectable. The semantic work lives in OpenCode agents; deterministic state, Git, validation, and rendering operations live in plain Node.js modules. Generated application-flow diagrams use a pinned Mermaid browser renderer. Agents validate diagram source and generated HTML structure without Playwright or browser automation; humans own visual review and can request artifact revisions.
+Phasecraft is intentionally local and inspectable. Semantic work lives in host-specific commands, skills, and agent roles; deterministic state, Git, validation, and rendering operations live in plain Node.js modules. Generated application-flow diagrams use a pinned Mermaid browser renderer. Agents validate diagram source and generated HTML structure without Playwright or browser automation; humans own visual review and can request artifact revisions.
 
-<a id="quick-start"></a>
+### Who it is for
 
-## ⚡ Quick Start
+Phasecraft is most useful when a change has real scope, risk, or review cost:
+
+- API, database, payment, authorization, migration, and integration work.
+- Teams that want AI-generated plans and changes to remain inspectable in Git.
+- Repositories where unrelated dirty files must not leak into a commit.
+- Work that benefits from a separate planner, executor, and verifier.
+
+For a typo or a tiny one-file edit, the full workflow may be more ceremony than you need.
+
+## Supported Hosts
+
+The same runtime and workflow contracts are projected into each host during installation.
+
+| Host | Install value | Invoke a stage | Integration |
+| --- | --- | --- | --- |
+| OpenCode | `opencode` | `/phasecraft-plan` | Commands, scoped agents, and shared skill |
+| Claude Code | `claude` | `/phasecraft-plan` | Commands, project agents, and shared skill |
+| Codex | `codex` | `$phasecraft-plan` | Agent Skills and named agent TOML files |
+| Pi | `pi` | `/phasecraft-plan` | Prompt templates, shared skill, and a policy extension |
+
+The deterministic state, artifact, review, and Git controls are identical. Host-level permission capabilities differ; see [Host Compatibility](docs/HOSTS.md) before enabling unattended tool access.
+
+<a id="installation"></a>
+
+## ⚡ Installation
 
 ### Requirements
 
-- [OpenCode](https://opencode.ai/)
+- OpenCode, Claude Code, Codex, or Pi
 - Node.js 20 or newer
-- Git
+- Git worktree
 
-### 1. Clone and install
+### Install from npm
 
-```bash
-git clone git@github.com:ahmadhafizh16/phasecraft.git
-cd phasecraft
-node bin/install.mjs --target /path/to/your/project
-```
-
-The target is the application project root, not its `.opencode` directory. Restart OpenCode after installation, then launch it from that project:
+Run the command from your application repository. Choose the host you use:
 
 ```bash
-opencode /path/to/your/project
+# OpenCode
+npx @ahmadhafizh16/phasecraft@latest install --host opencode
+
+# Claude Code
+npx @ahmadhafizh16/phasecraft@latest install --host claude
+
+# Codex
+npx @ahmadhafizh16/phasecraft@latest install --host codex
+
+# Pi
+npx @ahmadhafizh16/phasecraft@latest install --host pi
 ```
 
-### 2. Initialize the project once
+Use `--target` when installing into another repository, or install every adapter for a shared project:
+
+```bash
+npx @ahmadhafizh16/phasecraft@latest install --host claude --target /path/to/project
+npx @ahmadhafizh16/phasecraft@latest install --host all --target /path/to/your/project
+```
+
+The target is the application project root. Restart OpenCode, Claude Code, or Codex after installation; in Pi, run `/reload`. See the [host compatibility guide](docs/HOSTS.md) for generated layouts and safety differences.
+
+### Install from source
+
+```bash
+git clone https://github.com/ahmadhafizh16/phasecraft.git
+node phasecraft/bin/phasecraft.mjs install --host claude --target /path/to/project
+```
+
+Use source installation when developing Phasecraft or before the npm release is available.
+
+### Initialize a project once
 
 ```text
 /phasecraft-init
@@ -71,33 +119,117 @@ opencode /path/to/your/project
 
 Init confirms artifact tracking, configures the work-path template, selects and hashes authoritative project documents, and creates the first work item.
 
-### 3. Create later work without reinitializing
+OpenCode, Claude Code, and Pi use `/phasecraft-*` commands. Codex exposes the same stages as `$phasecraft-*` skills.
+
+Init asks you to confirm:
+
+- Whether workflow artifacts stay local or are reviewable in Git.
+- How work paths should be organized, such as `features/{feature}/tasks/{id}-{slug}`.
+- Which repository documents are authoritative.
+- The first work item and its clean or dirty Git baseline.
+
+### Create later work without reinitializing
 
 ```text
-/phasecraft-new-work MRS-4801 PDF authorization update
+/phasecraft-new-work PAY-143 Refund webhook support
 ```
 
 Arguments are suggestions. Phasecraft confirms the work ID, title, template values, branch association, exact artifact path, and fresh Git baseline before creation.
 
-### 4. Start the evidence discussion
+<a id="worked-example"></a>
+
+## Worked Example
+
+Imagine you need to prevent duplicate payment captures when a provider retries a callback.
+
+The examples below use slash-command syntax. In Codex, invoke the equivalent skill with `$phasecraft-*`.
+
+### 1. Discuss the change
 
 ```text
-/phasecraft-discuss --work MRS-4801
+/phasecraft-discuss --work PAY-142
 
-## PRD Context
-1. Current user problem and acceptance criteria
+## Product Context
+Provider callbacks may be delivered more than once. A payment must be captured at most once.
 
 ## Database Context
-1. Relevant tables, constraints, and migration concerns
-
-## Third-Party API Context
-1. Provider behavior, endpoints, limits, and failure modes
+The payments table already stores provider_reference but has no unique constraint.
 
 ## Desired Outcome
-The behavior we need after this work is complete.
+Duplicate callbacks return the existing payment result without issuing another capture.
+
+## Constraints
+Keep the current callback response contract and do not push automatically.
 ```
 
-This text seeds the discussion; it does not become fact automatically. Phasecraft verifies technical claims, records decisions, preserves unknowns, and requests permission before each external research lookup.
+The discussion does not silently become fact. Phasecraft may record results such as:
+
+```text
+E-001  The callback handler currently calls capturePayment before persistence.
+E-002  payments.provider_reference is indexed but not unique.
+D-001  Preserve the current successful callback response.
+P-001  Claim the provider reference transactionally before capture.
+U-001  Confirm whether historical duplicate references exist before migration.
+R-001  A uniqueness migration can fail when historical duplicates are present.
+```
+
+### 2. Generate and review the plan
+
+```text
+/phasecraft-plan --work PAY-142
+/phasecraft-verify-plan --work PAY-142
+```
+
+The authoritative plan is Markdown. A technical-change excerpt is explicit about current evidence, proposed behavior, affected code, and observable output:
+
+````markdown
+### CH-001: Claim callback idempotency before capture
+- Change type: code
+- File: src/payments/provider-callback.ts
+- Symbol: handleProviderCallback
+- Before: E-001 captures before durable duplicate detection.
+- Proposed after: PROPOSED P-001 claims the provider reference transactionally.
+- Database changes: add a unique provider_reference constraint after duplicate cleanup
+- API changes: preserve the existing successful callback response
+- Flow impact: F-001 routes duplicate callbacks to the stored payment result.
+
+#### Expected result
+```json
+{
+  "paymentId": "pay_123",
+  "captured": true,
+  "duplicate": true
+}
+```
+````
+
+After rendering, Phasecraft opens a local review page. You can comment on a requirement, code proposal, application-flow node mapping, task, risk, or selected text. Publishing comments creates an immutable feedback batch such as `FB-001`; it does not run an agent or edit source automatically.
+
+```text
+/phasecraft-plan --work PAY-142 --feedback FB-001
+```
+
+### 3. Execute, verify, and ship locally
+
+```text
+/phasecraft-execute --work PAY-142
+/phasecraft-verify --work PAY-142
+/phasecraft-ship --work PAY-142
+```
+
+Before creating commits, Ship shows the exact bound preview:
+
+```text
+HEAD:                 8ca4d52...
+Commit group:         C-001 fix: make payment callbacks idempotent
+Files:                migration.sql, provider-callback.ts, provider-callback.test.ts
+Automatic checks:     14 passed, 0 failed
+Pending manual checks: none
+Approval fingerprint: 96d79f0...
+Push:                 false
+```
+
+If `HEAD`, a file, a diff, a check result, or the worktree changes after approval, Ship aborts and requires a new preview.
 
 <a id="workflow"></a>
 
@@ -242,7 +374,7 @@ Every Phasecraft agent invocation also writes an immutable, atomically sequenced
 | Executor | Approved phase files | No | No |
 | Shipper | No | No | Runtime-controlled only |
 
-Models are inherited from the target project's OpenCode configuration. Phasecraft does not hardcode a provider or model.
+Models are inherited from the selected coding host and project configuration. Phasecraft does not hardcode a provider or model.
 
 <a id="architecture"></a>
 
@@ -259,32 +391,39 @@ Models are inherited from the target project's OpenCode configuration. Phasecraf
 | Feedback | `runtime/feedback.mjs` | Private drafts, immutable feedback batches, and planner resolutions |
 | Review | `runtime/review.mjs`, `runtime/review-ui.mjs` | Authenticated loopback server and responsive annotation shell |
 | Git | `runtime/git.mjs` | Baselines, patches, groups, previews, and local Ship |
-| OpenCode package | `opencode/` | Nine workflow commands, seven scoped agents, the shared skill, and review runtime commands |
-| Installer | `bin/install.mjs` | Conflict-safe copy, link, check, update, and uninstall |
+| Canonical host prompts | `opencode/` | Nine workflow commands, seven scoped roles, and the shared skill |
+| Host projections | `bin/hosts.mjs`, `pi/phasecraft.ts` | OpenCode, Claude Code, Codex, and Pi layouts and policy adapters |
+| Installer | `bin/install.mjs`, `bin/phasecraft.mjs` | Conflict-safe host installation, linking, health checks, updates, and uninstall |
 
-The installed runtime lives at `.opencode/phasecraft/runtime/phasecraft.mjs`. Inspect its machine-facing commands with:
+Each adapter bundles the same runtime under its host directory. Inspect the package runtime commands with:
 
 ```bash
-node runtime/phasecraft.mjs help
+npx @ahmadhafizh16/phasecraft@latest runtime help
 ```
 
 ## 📦 Installer Operations
 
 ```bash
-# Self-contained project copy (default)
-node bin/install.mjs --target /path/to/project
+# Self-contained project install
+npx @ahmadhafizh16/phasecraft@latest install --host claude --target /path/to/project
 
-# Individual-file symlinks for Phasecraft development
-node bin/install.mjs --target /path/to/project --link
+# Install all supported host adapters
+npx @ahmadhafizh16/phasecraft@latest install --host all --target /path/to/project
+
+# Update an existing managed install
+npx @ahmadhafizh16/phasecraft@latest install --host claude --target /path/to/project
 
 # Non-mutating health check
-node bin/install.mjs --target /path/to/project --check
+npx @ahmadhafizh16/phasecraft@latest check --host claude --target /path/to/project
 
 # Remove only unchanged managed files
-node bin/install.mjs --target /path/to/project --uninstall
+npx @ahmadhafizh16/phasecraft@latest uninstall --host claude --target /path/to/project
+
+# Individual-file symlinks for Phasecraft development
+node bin/install.mjs install --host claude --target /path/to/project --link
 ```
 
-The installer never edits `opencode.json`, silently overwrites modified managed files, removes unrelated files, or touches application Git history.
+Each host has an independent manifest, so several adapters can coexist. Generated prompts remain hashed managed files in link mode, while static runtime files are symlinked. The installer never edits host settings, silently overwrites modified managed files, removes unrelated files, or touches application Git history.
 
 ## 🧪 Development
 
@@ -293,7 +432,7 @@ npm run check
 npm test
 ```
 
-The `node:test` suite uses temporary Git repositories and covers state transitions, path safety, authority drift, research consent, plan validation, hostile HTML escaping, deterministic source generation, application-flow contracts, durable handoffs, baseline handling, recovery patches, commit-group merging, exact Ship drift detection, local commits, installer safety, and OpenCode package discovery.
+The `node:test` suite uses temporary Git repositories and covers state transitions, path safety, authority drift, research consent, plan validation, hostile HTML escaping, deterministic source generation, application-flow contracts, durable handoffs, baseline handling, recovery patches, commit-group merging, exact Ship drift detection, local commits, installer safety, and all host projections.
 
 <a id="documentation"></a>
 
@@ -303,11 +442,12 @@ The `node:test` suite uses temporary Git repositories and covers state transitio
 | --- | --- |
 | [Specification](docs/SPEC.md) | Behavioral contract, state machine, evidence, and Git safety |
 | [Artifact schemas](docs/ARTIFACT-SCHEMAS.md) | Exact project tree, JSON records, and restricted Markdown grammar |
-| [Roadmap](ROADMAP.md) | v0.1 implementation phases, conformance work, and deferred scope |
+| [Host compatibility](docs/HOSTS.md) | Installation layouts, invocation syntax, and host safety differences |
+| [Roadmap](ROADMAP.md) | Implementation phases, delivered capabilities, and deferred scope |
 
 ## 🚧 Current Scope
 
-Phasecraft v0.1 deliberately does **not** provide:
+Phasecraft deliberately does **not** provide:
 
 - Git push or pull-request creation
 - Jira or other issue-tracker APIs
@@ -319,4 +459,4 @@ Phasecraft v0.1 deliberately does **not** provide:
 
 ## 📄 License
 
-No license file has been added yet.
+MIT. See [LICENSE](LICENSE).

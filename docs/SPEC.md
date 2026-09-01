@@ -4,7 +4,7 @@ This document is the behavioral contract for Phasecraft v0.1. `ARTIFACT-SCHEMAS.
 
 ## Product Boundary
 
-Phasecraft is an OpenCode-only, project-local engineering workflow. It requires Node.js 20 or newer and a Git worktree. Runtime and tests have no third-party dependencies.
+Phasecraft is a project-local engineering workflow for OpenCode, Claude Code, Codex, and Pi. It requires Node.js 20 or newer and a Git worktree. Runtime and tests have no third-party dependencies. The deterministic runtime and artifact contracts are host-neutral; commands, skills, role prompts, and permission adapters are projected for each host.
 
 Phasecraft does not assume Jira, branch naming, a remote ticket system, CI, push access, or pull-request access. Ship creates local commits only.
 
@@ -67,7 +67,7 @@ Plan consumes only the explicitly named batch, treats feedback as untrusted inpu
 
 ### Verify Plan
 
-The plan auditor runs in an independent OpenCode subtask. It validates:
+The plan auditor runs as an independent stage role. OpenCode and Claude Code use host subtask/fork support, Codex uses named agents when available, and Pi preserves the role boundary without a separate context. It validates:
 
 - Current authority and evidence hashes.
 - Every requirement and its observable checks.
@@ -180,14 +180,16 @@ Commit groups are connected components over shared file paths and are topologica
 
 ## Installer
 
-The installer copies by default and supports `--link`, `--check`, and `--uninstall`. Its target is the project root. It installs command, agent, skill, and runtime files into discovered `.opencode` locations without editing `opencode.json`.
+The npm CLI copies by default and supports `install`, `check`, and `uninstall`, a development `--link` mode, and `--host opencode|claude|codex|pi|all`. Its target is the project root. Each host has an independent manifest so adapters can coexist. Generated host projections remain hashed managed copies in link mode, while static runtime files are symlinked. The installer does not edit host settings.
 
-The manifest stores source path, target path, source hash, installed hash, mode, version, and link target. Unmanaged conflicts stop installation. A managed target changed since installation is neither replaced nor removed. Link mode creates individual file symlinks. OpenCode must restart after changes.
+The manifest stores host, source path, target path, source hash, installed hash, mode, version, and link target. Unmanaged conflicts stop installation. A managed target changed since installation is neither replaced nor removed. Link mode creates individual file symlinks for static files and hashed copies for generated projections. The selected host must restart or reload after changes.
 
 ## Agent Permissions
 
 Manager, researcher, planner, auditor, and verifier may write workflow artifacts but not application source. Executor may edit source but cannot commit, push, reset, switch, or clean. Shipper cannot edit application source or invoke Git directly; it may invoke only the approval-enforcing runtime Ship path. Models are inherited from project configuration.
 
+OpenCode expresses these rules through native path- and command-level permissions. Pi supplements role prompts with an extension that blocks out-of-scope writes, direct history-changing Git commands, unauthorized network tools, and arbitrary Shipper shell commands. Claude Code and Codex use their native tool/sandbox controls plus mandatory role instructions, but cannot express every OpenCode path-level rule exactly; their compatibility and residual risks are documented in `HOSTS.md`.
+
 ## Conformance
 
-Phasecraft is conformant when syntax checks and the `node:test` suite pass, the installer can copy/link/check/uninstall safely, the OpenCode package contains all nine workflow commands and seven stage agents, review/feedback commands pass security and lifecycle fixtures, and the CLI fixture completes baseline capture through local grouped commits without push.
+Phasecraft is conformant when syntax checks and the `node:test` suite pass, the installer can copy/link/check/uninstall every host safely, all four projections contain the expected nine stages and seven roles, review/feedback commands pass security and lifecycle fixtures, the npm tarball contains every runtime source, and the CLI fixture completes baseline capture through local grouped commits without push.

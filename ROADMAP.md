@@ -14,37 +14,39 @@ The roadmap tracks implementation of [the v0.1 specification](docs/SPEC.md). Det
 | P-06 | Build reusable installer. | Copy, link, check, update safety, modified-target preservation, and uninstall tests pass. | completed |
 | P-07 | Conformance and dogfooding. | Syntax check, full `node:test`, installer fixture, CLI Init-to-Ship fixture, and OpenCode resolved-config validation pass. | completed |
 | P-08 | Build local interactive artifact review. | Deterministic anchors, immutable feedback, authenticated loopback UI, planner resolutions, security tests, and installer coverage pass. | completed |
+| P-09 | Package a host-neutral workflow. | Public npm metadata, MIT licensing, and tested OpenCode, Claude Code, Codex, and Pi projections exist. | completed |
 
-## Current Phase: P-08
+## Current Phase: P-09
 
 ### Goal
 
-Deliver local interactive review without making browser state or generated HTML authoritative.
+Deliver one installable package without duplicating or weakening the deterministic Phasecraft core.
 
 ### Requirements
 
-- REQ-001: Generated plan and roadmap HTML expose deterministic semantic review anchors and plain-text manifests.
-- REQ-002: Drafts persist privately and published feedback/resolutions are immutable and exact-hash-bound.
-- REQ-003: The review server is loopback-only, capability-protected, CSRF-protected, path-contained, and stale-safe.
-- REQ-004: The responsive shell supports semantic and same-anchor text-selection comments without browser automation.
-- REQ-005: Plan consumes only an explicit feedback batch, writes every disposition, regenerates HTML, and reopens review.
-- REQ-006: Syntax, unit, workflow, installer, lifecycle, and security tests pass.
+- REQ-001: One public npm CLI installs Phasecraft project-locally for OpenCode, Claude Code, Codex, and Pi.
+- REQ-002: Host prompts are generated from the canonical workflow instead of maintained as divergent copies.
+- REQ-003: Independent manifests preserve conflict detection, modified-file protection, health checks, and uninstall safety.
+- REQ-004: Codex receives Agent Skills and role TOML, Claude receives commands/agents/skills, and Pi receives prompts/skills/tool guards.
+- REQ-005: Host limitations and safety parity are explicit.
+- REQ-006: Syntax, host projection, installer, package-content, and full workflow tests pass.
 
 ### Risks
 
-- A same-origin remote Mermaid script could access the authenticated review API. Mitigation: review-mode artifact CSP blocks every artifact script and preserves Mermaid source.
-- Browser comments could drift onto changed content. Mitigation: exact source/HTML hashes and unique quote/context validation reject stale publication.
-- Feedback could be mistaken for evidence or command authority. Mitigation: immutable projections label it untrusted, and Plan independently verifies technical claims.
+- Host prompt formats may drift. Mitigation: generate projections from one canonical source and test exact command/role counts.
+- Claude Code and Codex cannot express OpenCode's exact path permissions. Mitigation: combine native host controls with mandatory role policies and document residual risk.
+- Pi has no equivalent named-agent isolation. Mitigation: native prompt templates activate role guards and disclose the same-session limitation.
 
 ### Exit
 
-P-08 completed with deterministic rendering, immutable feedback, authenticated review, planner integration, installer checks, and the full test suite passing.
+P-09 completed with a public MIT package definition, coexistence-safe host manifests, generated host projections, Pi tool guards, documentation, and passing conformance checks.
 
 ## Delivered After v0.1
 
 - Local authenticated plan/roadmap review with element and selected-text comments.
 - Immutable exact-hash-bound feedback batches and planner resolutions.
 - Differential risk-aware plan re-verification.
+- OpenCode, Claude Code, Codex, and Pi host adapters from one npm package.
 
 ## Deferred
 
