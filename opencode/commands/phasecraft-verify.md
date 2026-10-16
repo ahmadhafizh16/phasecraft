@@ -8,4 +8,6 @@ Load the `phasecraft` skill and perform only Verify for `$ARGUMENTS`. Run the `v
 
 Write `VERIFICATION.md` with requirement-by-requirement evidence and findings ordered by severity. Record the outcome through `verification-result`: use `verified` when every required check passes, `verified_pending` with structured pending checks when automatic checks pass but human-only checks remain, and `verification_failed` for any implementation or automatic-check failure. Do not edit application source or rationalize deviations.
 
+Pass `--checks <json>` to `verification-result` with actual independent observations as a non-empty array of `{ "name": "exact check or command", "passed": true, "output": "observed result" }`; failed observations use false. Runtime verification binds these checks to the current implementation checkpoint and approval receipt. Do not use raw transitions to bypass the recorded verification result.
+
 Run `handoff-list --all` and read the latest executor plus all prior verifier handoffs before verification. Before every return, invoke `handoff-write --agent phasecraft-verifier` with checks, findings, pending human evidence, outcome, and exact next action; never allocate `H-NNN.md` manually.

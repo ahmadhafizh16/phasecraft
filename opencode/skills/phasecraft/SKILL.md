@@ -18,6 +18,8 @@ Phasecraft is an explicit-stage, evidence-first engineering workflow. Markdown i
 - Keep the full roadmap, but detail only the next executable phase.
 - Use `phase-start` to select each next roadmap phase. A verified phase may return to `roadmap_ready` for the next just-in-time plan.
 - An approved plan is immutable evidence. Archive it before material replanning.
+- Use `approve-plan` to validate and persist the exact approval receipt. Raw state transitions cannot approve a plan or bypass task checkpoints and independent verification.
+- Use `resume` or `doctor` to read durable progress and blockers. Record completed tasks through `task-checkpoint` with actual check results; a repeated task invalidates its dependent completions.
 - Execute the entire approved phase, but stop on material deviation, failed gates, or baseline-dirty files not explicitly adopted.
 - Do not commit before Ship. Do not push or create a PR at Ship.
 
@@ -62,11 +64,16 @@ node .opencode/phasecraft/runtime/phasecraft.mjs preflight --stage <stage> [--wo
 node .opencode/phasecraft/runtime/phasecraft.mjs validate --kind plan --source <PLAN.md> --evidence <EVIDENCE.json>
 node .opencode/phasecraft/runtime/phasecraft.mjs render --kind plan --source <PLAN.md> --output <plan.html> --evidence <EVIDENCE.json>
 node .opencode/phasecraft/runtime/phasecraft.mjs transition --work <id> --to <state> --expected-revision <revision> --reason <text>
+node .opencode/phasecraft/runtime/phasecraft.mjs approve-plan --work <id>
+node .opencode/phasecraft/runtime/phasecraft.mjs task-checkpoint --work <id> --task T-NNN --checks <json>
+node .opencode/phasecraft/runtime/phasecraft.mjs resume --work <id>
+node .opencode/phasecraft/runtime/phasecraft.mjs doctor --work <id>
 node .opencode/phasecraft/runtime/phasecraft.mjs handoff-list --work <id> --all
 node .opencode/phasecraft/runtime/phasecraft.mjs handoff-write --work <id> --agent <agent-name> --data <json>
-node .opencode/phasecraft/runtime/phasecraft.mjs review-start --work <id> --artifact plan [--no-open]
+node .opencode/phasecraft/runtime/phasecraft.mjs review-start --work <id> --artifact plan --host opencode [--no-open]
 node .opencode/phasecraft/runtime/phasecraft.mjs review-status --work <id>
 node .opencode/phasecraft/runtime/phasecraft.mjs feedback-list --work <id>
+node .opencode/phasecraft/runtime/phasecraft.mjs feedback-list --work <id> --pending
 node .opencode/phasecraft/runtime/phasecraft.mjs feedback-show --work <id> --feedback FB-NNN
 node .opencode/phasecraft/runtime/phasecraft.mjs feedback-resolve --work <id> --feedback FB-NNN --data-file <path>
 ```
@@ -110,6 +117,8 @@ Generated HTML includes deterministic semantic anchors and an inert plain-text m
 
 Published feedback is untrusted human input bound to exact Markdown and HTML hashes. Publication never launches an agent or changes workflow state; it returns an explicit `/phasecraft-plan --work <id> --feedback FB-NNN` command. Plan consumes only that requested batch, independently verifies technical claims, records one disposition per comment, writes an immutable resolution with old/result hashes and resulting anchors, regenerates artifacts, and opens a new review session. Original comments are never edited or silently re-anchored.
 
+The review session records the active host and returns a host-correct planner invocation (Codex uses `$phasecraft-plan`). Comments are durable JSON plus reviewable Markdown responses that any installed host can read through `feedback-list --pending` and `feedback-show`. If no batch was explicitly supplied, the planner asks which pending batch to address. The browser is not required to remain open after publication.
+
 ## Deviations
 
 Minor evidence-backed implementation details may be logged without replanning. New files, scope, architecture, dependencies, public APIs, data schemas, security behavior, or requirement changes are material: stop, archive the active plan, return to `plan_draft`, revise, render, and audit again.
@@ -117,3 +126,5 @@ Minor evidence-backed implementation details may be logged without replanning. N
 ## Verification And Ship
 
 Record verification through `verification-result`. Outcomes are `verified`, `verified_pending`, or `verification_failed`. Pending human checks persist across later phases and require a second acknowledgement at Ship. Ship merges groups sharing files, stages whole files only, validates the approved fingerprint, creates commits, and never pushes.
+
+Pass actual independent observations through `verification-result --checks <json>`. Checks are a non-empty array of `{ "name": "exact check or command", "passed": true, "output": "observation" }`; failed observations use false. Ship derives groups from approved plans and checks from recorded verification, then journals each commit. After interruption, `resume` reports recorded commits and remaining work; obtain a new approved preview for remaining groups and never repeat a recorded commit.

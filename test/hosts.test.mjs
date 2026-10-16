@@ -6,6 +6,9 @@ import test from "node:test";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { desiredHostFiles, SUPPORTED_HOSTS } from "../bin/hosts.mjs";
 import { checkPhasecraft, installPhasecraft, uninstallPhasecraft } from "../bin/install.mjs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { initProject, initWork } from "../runtime/state.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -78,6 +81,25 @@ test("link mode links static runtime files and hashes generated projections", as
   assert.equal(runtime.mode, "link");
   assert.equal(skill.mode, "copy");
   assert.equal(skill.generated, true);
+  await initProject(target, { artifactMode: "local", workPathTemplate: "tasks/{id}-{slug}" });
+  await initWork(target, { id: "LINK-1", title: "Host discovery" });
+  const execute = promisify(execFile);
+  const runtimePath = path.join(target, ".codex", "phasecraft", "runtime", "phasecraft.mjs");
+  const report = JSON.parse((await execute(process.execPath, [runtimePath, "doctor", "--root", target, "--work", "LINK-1"])).stdout);
+  assert.equal(report.host, "codex");
+  assert.match(report.nextAction.command, /^\$phasecraft-discuss/u);
+});
+
+test("every generated host workflow includes runtime gates and interactive HTML response handoffs", async () => {
+  for (const host of ["claude", "codex", "pi"]) {
+    const entries = await desiredHostFiles(root, host);
+    const commands = entries.filter((entry) => entry.generated).map(generatedText).join("\n");
+    for (const command of ["approve-plan", "task-checkpoint", "verification-result", "feedback-show", "feedback-list --pending", "resume --work"]) {
+      assert.ok(commands.includes(command), `${host} must include ${command}`);
+    }
+    assert.ok(commands.includes(`review-start --artifact plan --host ${host}`));
+    assert.ok(commands.includes("runtime-approved phases"));
+  }
 });
 
 test("Pi extension applies the active Phasecraft role guards", async (t) => {

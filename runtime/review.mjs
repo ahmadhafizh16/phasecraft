@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveWork } from "./state.mjs";
 import { reviewClientJs, reviewCss, reviewShellHtml, SHELL_CSP } from "./review-ui.mjs";
+import { stageInvocation, workflowHost } from "./hosts.mjs";
 
 // Feedback integration adapter. These are the only functions that know the expected
 // feedback.mjs surface; callers can inject equivalent methods while that module evolves.
@@ -582,6 +583,7 @@ function startSessionResult(session) {
 
 export async function startReviewServer(options) {
   const state = options?.state;
+  const agentHost = workflowHost(options.host);
   const artifacts = options?.artifacts ?? await discoverReviewArtifacts(state);
   const active = selectReviewArtifact(artifacts, state, options);
   if (!active) throw reviewError("Requested review artifact is not allowlisted", "REVIEW_ARTIFACT_UNKNOWN", 404);
@@ -624,7 +626,7 @@ export async function startReviewServer(options) {
       if (!authenticated) throw reviewError("Review session authentication is required", "REVIEW_AUTH_REQUIRED", 401);
       if (request.method === "GET" && url.pathname === "/api/session") {
         const drafts = await adapter.listDrafts(context);
-        return send(response, 200, { work, csrf: csrfToken, activeKey: active.key, artifacts: artifacts.map(publicArtifact), drafts });
+        return send(response, 200, { work, agentHost, csrf: csrfToken, activeKey: active.key, artifacts: artifacts.map(publicArtifact), drafts });
       }
       const artifactMatch = request.method === "GET" && url.pathname.match(/^\/artifact\/([A-Za-z0-9_-]+)$/u);
       if (artifactMatch) {
@@ -696,7 +698,7 @@ export async function startReviewServer(options) {
           if (!deleted) throw reviewError("Published feedback but could not remove its private draft", "REVIEW_DRAFT_DELETE_FAILED", 500);
         }
         const id = result.id ?? result.batch?.id;
-        return send(response, 201, { ...result, id, work, publishedCommentIds: selected.map((draft) => draft.id), command: `/phasecraft-plan --work ${work} --feedback ${id}` });
+        return send(response, 201, { ...result, id, work, agentHost, publishedCommentIds: selected.map((draft) => draft.id), command: stageInvocation(agentHost, "plan", work, id) });
       }
       if (request.method === "POST" && url.pathname === "/api/stop") {
         mutationRequest(request, origin, csrfToken);
@@ -727,7 +729,7 @@ export async function startReviewServer(options) {
   origin = `http://${expectedHost}`;
   const url = `${origin}/#${bootstrapToken}`;
   const metadata = {
-    schemaVersion: 1, sessionId, pid: process.pid, host: HOST, port: address.port, origin,
+    schemaVersion: 1, sessionId, pid: process.pid, host: HOST, agentHost, port: address.port, origin,
     url, bootstrapToken, cookieToken, csrfToken, controlToken, work,
     activeKey: active.key, activeArtifact: publicArtifact(active), artifacts: artifacts.map(publicArtifact),
     startedAt: new Date().toISOString(), idleTimeoutMs,
@@ -820,7 +822,7 @@ export async function stopReview(input, options = {}) {
 export const reviewStop = stopReview;
 
 async function detachedStart(state, options) {
-  const config = Buffer.from(JSON.stringify({ state, work: options.work, artifact: options.artifact, artifactKey: options.artifactKey, idleTimeoutMs: options.idleTimeoutMs })).toString("base64url");
+  const config = Buffer.from(JSON.stringify({ state, host: options.host, work: options.work, artifact: options.artifact, artifactKey: options.artifactKey, idleTimeoutMs: options.idleTimeoutMs })).toString("base64url");
   const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "--serve-detached", config], { detached: true, stdio: ["ignore", "ignore", "ignore", "ipc"] });
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => { child.kill(); reject(reviewError("Detached review server did not start", "REVIEW_START_TIMEOUT", 500)); }, options.startTimeoutMs ?? 5_000);
@@ -834,12 +836,13 @@ async function detachedStart(state, options) {
 }
 
 export async function startReview(input, options = {}) {
+  options = { ...options, host: workflowHost(options.host) };
   const resolved = await resolveState(input, options);
   const artifacts = await discoverReviewArtifacts(resolved.state);
   const requested = selectReviewArtifact(artifacts, resolved.state, options);
   if (!requested) throw reviewError("Requested review artifact is not allowlisted", "REVIEW_ARTIFACT_UNKNOWN", 404);
   const current = await readSession(resolved.state).catch(() => null);
-  if (current && await health(current) && current.activeKey === requested.key && current.activeArtifact?.sourceHash === requested.sourceHash && current.activeArtifact?.htmlHash === requested.htmlHash) {
+  if (current && await health(current) && (current.agentHost ?? "opencode") === options.host && current.activeKey === requested.key && current.activeArtifact?.sourceHash === requested.sourceHash && current.activeArtifact?.htmlHash === requested.htmlHash) {
     const opened = await openReviewBrowser(current.url, options);
     return { ...startSessionResult(current), reused: true, opened: opened.opened, openReason: opened.reason };
   }

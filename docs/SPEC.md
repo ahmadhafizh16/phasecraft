@@ -1,6 +1,6 @@
-# Phasecraft v0.1 Specification
+# Phasecraft Workflow Specification
 
-This document is the behavioral contract for Phasecraft v0.1. `ARTIFACT-SCHEMAS.md` is authoritative for file and Markdown shape.
+This document is the behavioral contract for Phasecraft, including the v0.5 runtime gates. `ARTIFACT-SCHEMAS.md` is authoritative for file and Markdown shape. `V0.5.md` describes current runtime commands and upgrading existing work.
 
 ## Product Boundary
 
@@ -21,6 +21,8 @@ Phasecraft does not assume Jira, branch naming, a remote ticket system, CI, push
 9. Markdown is authoritative. Generated HTML source is escaped, deterministic, and SHA-bound; application diagrams use a pinned strict Mermaid renderer with source fallback.
 10. Runtime state uses atomic writes, revisions, and same-work locks.
 11. Every resolved Phasecraft agent invocation writes one atomically sequenced immutable handoff before returning, including blocked and no-change rounds.
+12. Runtime `approve-plan` records exact approval inputs before `plan_verified`; execution requires current task checkpoints and independent recorded checks before Ship.
+13. Ship journals pending and completed commits, and recovery requires a new exact preview for remaining groups.
 
 ## Work Resolution
 
@@ -87,6 +89,8 @@ Every other finding is classified as active-phase safety/correctness, active-pha
 The first plan audit covers the active phase end to end once. A repeated audit uses the immediately preceding immutable plan and verification to compare stable semantic identities. It reruns integrity checks, then reviews changed anchors, direct dependencies, changed evidence, unresolved prior findings, and due triggers. Unchanged accepted, deferred, and non-blocking dispositions are not reopened individually; one explicit human confirmation binds their carried copies to the new plan hash. A full semantic audit is repeated only when exact prior artifacts or a trustworthy impact set are unavailable.
 
 The audit transitions to `plan_verified` when integrity passes, every semantic finding has a human disposition, and none remain `fix-now` or `pending`. Its outcome is `APPROVED` when there were no findings or `APPROVED WITH DISPOSITIONS` otherwise. `fix-now`, pending Q&A, and integrity failures retain `plan_draft` as `CHANGES REQUESTED`, `NEEDS HUMAN DECISION`, and `BLOCKED BY INTEGRITY GATE`, respectively. This permits deliberate speed without hiding risk or requiring a perfect first plan.
+
+The auditor performs that transition through `approve-plan`. The runtime validates structural approval bindings, dispositions, scope, and dependencies, persists an exact receipt, and rejects approval through a raw state transition. Execute revalidates the receipt. Task checkpoints bind observed checks and cumulative patches, enforce dependencies and scope preservation, and invalidate dependent completions on retry. Independent verification records checks against the approval and implementation fingerprints. See `V0.5.md` for the command contract.
 
 ### Execute
 
@@ -159,6 +163,8 @@ verification_failed -> executing | plan_draft
 ```
 
 `phase-start` uses the verified-to-roadmap edge, records the previous phase as completed, selects the next `P-NN`, resets that phase's plan version, and preserves unresolved manual checks for final Ship acknowledgement.
+
+`execution_complete`, `verifying`, `verified`, and `verified_pending` may also return to `plan_draft` to revoke approval and recover from material drift. Archive the exact audited artifacts before revising them.
 
 Every state has a monotonically increasing revision. Transition may require an expected revision and fails on a conflict. Same-work lock directories contain owner metadata and are never silently broken.
 

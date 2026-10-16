@@ -5,17 +5,17 @@ Phasecraft keeps one deterministic Node.js runtime and one canonical set of work
 ## Installation
 
 ```bash
-npx @ahmadhafizh16/phasecraft@latest install --host opencode --target /path/to/project
-npx @ahmadhafizh16/phasecraft@latest install --host claude --target /path/to/project
-npx @ahmadhafizh16/phasecraft@latest install --host codex --target /path/to/project
-npx @ahmadhafizh16/phasecraft@latest install --host pi --target /path/to/project
+npx @ahmadhm/phasecraft@latest install --host opencode --target /path/to/project
+npx @ahmadhm/phasecraft@latest install --host claude --target /path/to/project
+npx @ahmadhm/phasecraft@latest install --host codex --target /path/to/project
+npx @ahmadhm/phasecraft@latest install --host pi --target /path/to/project
 ```
 
 Use `--host all` to install every adapter. Installation is project-local. Each host has its own manifest and can be checked or removed independently:
 
 ```bash
-npx @ahmadhafizh16/phasecraft@latest check --host codex --target /path/to/project
-npx @ahmadhafizh16/phasecraft@latest uninstall --host codex --target /path/to/project
+npx @ahmadhm/phasecraft@latest check --host codex --target /path/to/project
+npx @ahmadhm/phasecraft@latest uninstall --host codex --target /path/to/project
 ```
 
 ## Host Matrix
@@ -28,6 +28,8 @@ npx @ahmadhafizh16/phasecraft@latest uninstall --host codex --target /path/to/pr
 | Pi | `/phasecraft-init` | `.pi/prompts`, `.pi/skills`, `.pi/extensions/phasecraft.ts` | `.pi/phasecraft/runtime` |
 
 The complete stage set is `phasecraft-init`, `phasecraft-new-work`, `phasecraft-discuss`, `phasecraft-plan`, `phasecraft-verify-plan`, `phasecraft-execute`, `phasecraft-verify`, `phasecraft-ship`, and `phasecraft-status`.
+
+All four adapters use the v0.5 runtime approval, task-checkpoint, verification, readiness, and Ship-journal contracts. Plan generates interactive HTML review on every host. The review session records its agent host and returns the corresponding planner invocation when feedback is published; agents read the durable response through `feedback-show`. `doctor`, `resume`, and `feedback-list --pending` expose pending response IDs and host-correct commands. See [the v0.5 guide](V0.5.md).
 
 ## Safety Parity
 

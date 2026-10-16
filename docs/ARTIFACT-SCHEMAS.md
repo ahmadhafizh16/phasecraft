@@ -450,7 +450,11 @@ Handoffs are navigation context. They contain no secrets, credentials, raw PII, 
 
 ## Runtime State
 
+v0.5 adds `planApprovals`, `executionRecords`, and `verificationRecords`, keyed by `P-NN`. Approval receipts contain phase/version, exact plan/HTML/audit/evidence-registry hashes, approved tasks/files/groups/messages, human dispositions, and a deterministic fingerprint. Copies live under `.local/work/<key>/approvals/P-NN/<fingerprint>.json` with mode `0400`. Execution records contain the starting worktree fingerprint, completed-task sequence map, and append-only checkpoint history with checks, cumulative patch metadata, implementation fingerprint, and invalidated dependent task IDs. Verification records contain outcome, observed checks, approval fingerprint, and implementation fingerprint. Older schema-v1 state remains readable; missing receipts are not grandfathered through execution gates.
+
 `state.json` contains schema and revision, work identity and paths, branch, status, active and completed phases, phase plan version, pending checks, adopted and explicitly cleaned baseline files, external research approvals, timestamps, and transition history. Status changes occur only through legal transitions. Other updates increment the same revision without changing status.
+
+Verification records also store per-file content and executable-bit observations. Final Ship checks each file against its most recent owning phase's independent verification, so an edit made between phases cannot silently replace verified work; later approved phases may deliberately revise shared files.
 
 `registry.json` maps id, stable key, title, artifact path, branch, and status. It supports deterministic work resolution but is not semantic evidence.
 
@@ -459,3 +463,5 @@ Handoffs are navigation context. They contain no secrets, credentials, raw PII, 
 `BASELINE.json` records root, `HEAD`, branch, capture time, dirty file records, staged files, and content hashes. `.phasecraft` entries are excluded.
 
 Task patches are binary-capable cumulative Git patches stored with mode `0600`. `preview.json` stores exact merged groups, binary-capable diff text and hashes, file hashes, checks, pending checks, excluded changed files, worktree hash, and approval fingerprint. `result.json` records local commit hashes and `pushed: false`.
+
+v0.5 task checkpoint patches use `T-NNN-<sequence>.patch`, retaining repeated-task history. Ship previews also bind a workflow contract fingerprint over phase approval receipts, independent verification records, and pending checks. `ship/journal.json` is private mode `0600`, schema v1, with original preview, current preview fingerprint, contract fingerprint, completed commits, pending group/parent, and status. Each commit records group, commit SHA, parent SHA, exact files/message, and binary diff hash. A pending commit is reconciled only if Git matches those approved inputs.

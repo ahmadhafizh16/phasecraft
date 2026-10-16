@@ -911,6 +911,7 @@ export async function listFeedback(work) {
       commentCount: batch.comments.length,
       projectionExists: await access(projectionPath).then(() => true, () => false),
       resolutionExists: await access(resolutionPath).then(() => true, () => false),
+      resolved: resolution !== null,
       dispositions: resolution
         ? Object.fromEntries(FEEDBACK_DISPOSITIONS.map((disposition) => [
           disposition,

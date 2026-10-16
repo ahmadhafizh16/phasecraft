@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { run } from "../runtime/phasecraft.mjs";
 import { runGit } from "../runtime/git.mjs";
+import { passingChecks, writePlan } from "../test-data/workflow.mjs";
 
 test("CLI drives an explicit initialized to plan draft workflow", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "phasecraft-workflow-"));
@@ -99,25 +100,28 @@ test("CLI captures, adopts, snapshots, previews, and ships exact files", async (
     await run(["transition", "--root", root, "--work", "TASK-9", "--to", to]);
   }
   await run(["phase-start", "--root", root, "--work", "TASK-9", "--phase", "P-01"]);
-  for (const to of ["plan_draft", "plan_verified", "executing"]) {
+  await run(["transition", "--root", root, "--work", "TASK-9", "--to", "plan_draft"]);
+  const draft = await run(["status", "--root", root, "--work", "TASK-9"]);
+  await writePlan(draft.state);
+  await run(["approve-plan", "--root", root, "--work", "TASK-9"]);
+  for (const to of ["executing"]) {
     await run(["transition", "--root", root, "--work", "TASK-9", "--to", to]);
   }
   const snapshot = await run([
     "snapshot", "--root", root, "--work", "TASK-9", "--task", "T-001", "--files", '["feature.txt"]',
   ]);
   assert.ok(snapshot.bytes > 0);
+  await run(["task-checkpoint", "--root", root, "--work", "TASK-9", "--task", "T-001", "--checks", JSON.stringify(passingChecks)]);
   for (const to of ["execution_complete", "verifying"]) {
     await run(["transition", "--root", root, "--work", "TASK-9", "--to", to]);
   }
-  await run(["verification-result", "--root", root, "--work", "TASK-9", "--outcome", "verified"]);
+  await run(["verification-result", "--root", root, "--work", "TASK-9", "--outcome", "verified", "--checks", JSON.stringify(passingChecks)]);
   const preview = await run([
     "ship-preview",
     "--root",
     root,
     "--work",
     "TASK-9",
-    "--groups",
-    '[{"id":"C-001","message":"feat: adopt implementation","files":["feature.txt"]}]',
   ]);
   const shipped = await run([
     "ship", "--root", root, "--work", "TASK-9", "--approval", preview.approvalFingerprint,
@@ -142,7 +146,13 @@ test("verified phases return to just-in-time planning with pending checks preser
     await run(["transition", "--root", root, "--work", "MULTI-1", "--to", to]);
   }
   await run(["phase-start", "--root", root, "--work", "MULTI-1", "--phase", "P-01"]);
-  for (const to of ["plan_draft", "plan_verified", "executing", "execution_complete", "verifying"]) {
+  await run(["transition", "--root", root, "--work", "MULTI-1", "--to", "plan_draft"]);
+  await writePlan((await run(["status", "--root", root, "--work", "MULTI-1"])).state);
+  await run(["approve-plan", "--root", root, "--work", "MULTI-1"]);
+  await run(["transition", "--root", root, "--work", "MULTI-1", "--to", "executing"]);
+  await writeFile(path.join(root, "feature.txt"), "implemented\n");
+  await run(["task-checkpoint", "--root", root, "--work", "MULTI-1", "--task", "T-001", "--checks", JSON.stringify(passingChecks)]);
+  for (const to of ["execution_complete", "verifying"]) {
     await run(["transition", "--root", root, "--work", "MULTI-1", "--to", to]);
   }
   const verification = await run([
@@ -153,6 +163,8 @@ test("verified phases return to just-in-time planning with pending checks preser
     "MULTI-1",
     "--outcome",
     "verified_pending",
+    "--checks",
+    JSON.stringify(passingChecks),
     "--pending",
     '[{"id":"M-001","description":"Confirm the mobile interaction."}]',
   ]);

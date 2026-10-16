@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { lstat, mkdir, readFile, readlink, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { writeJsonAtomic } from "./state.mjs";
 
 function gitError(message, code, details = {}) {
   const value = new Error(message);
@@ -127,7 +128,7 @@ export async function getStatus(projectRoot) {
   return records.sort((left, right) => left.path.localeCompare(right.path));
 }
 
-async function contentHash(projectRoot, filePath) {
+export async function contentHash(projectRoot, filePath) {
   const absolute = path.join(projectRoot, ...normalizeRepositoryPath(filePath).split("/"));
   const information = await lstat(absolute).catch(() => null);
   if (!information) return null;
@@ -313,7 +314,7 @@ function assertCompleteRenames(status, files, code) {
   }
 }
 
-async function patchForFiles(projectRoot, files, status = null) {
+export async function patchForFiles(projectRoot, files, status = null) {
   status ??= await getStatus(projectRoot);
   assertCompleteRenames(status, files, "PATCH_RENAME_INCOMPLETE");
   const untrackedSet = new Set(status.filter((record) => record.untracked).map((record) => record.path));
@@ -442,6 +443,7 @@ export async function createShipPreview(projectRoot, groups, options = {}) {
       .sort(),
     checks: options.checks ?? [],
     pendingManualChecks: options.pendingManualChecks ?? [],
+    contractFingerprint: options.contractFingerprint ?? null,
   };
   const approvalFingerprint = createHash("sha256").update(stableStringify(payload)).digest("hex");
   return { ...payload, approvalFingerprint };
@@ -454,6 +456,62 @@ async function cachedFiles(projectRoot) {
 
 function equalArrays(left, right) {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+async function verifyJournalCommit(root, entry) {
+  if (!/^[a-f0-9]{40,64}$/u.test(entry.commit ?? "") || !/^[a-f0-9]{40,64}$/u.test(entry.headBefore ?? "")) {
+    throw gitError("Ship journal contains an invalid commit identity", "SHIP_JOURNAL_INVALID");
+  }
+  const details = await runGit(root, ["show", "-s", "--format=%P%x00%B", entry.commit]);
+  const [parent, message] = details.stdout.toString("utf8").split("\0");
+  const names = await runGit(root, ["diff-tree", "--no-commit-id", "--name-only", "--no-renames", "-r", "-z", entry.commit]);
+  const committedFiles = names.stdout.toString("utf8").split("\0").filter(Boolean).sort();
+  const diff = await runGit(root, ["diff", entry.headBefore, entry.commit, "--binary", "--no-ext-diff", "--no-renames", "--", ...entry.files]);
+  if (parent.trim() !== entry.headBefore || message.trimEnd() !== entry.message.trimEnd()
+    || !equalArrays(committedFiles, [...entry.files].sort())
+    || createHash("sha256").update(diff.stdout).digest("hex") !== entry.diffHash) {
+    throw gitError("A recorded Ship commit does not match its approved group", "SHIP_JOURNAL_DRIFT", { commits: [entry] });
+  }
+}
+
+export async function inspectShipJournal(projectRoot, journalPath) {
+  const source = await readFile(journalPath, "utf8").catch((cause) => {
+    if (cause.code === "ENOENT") return null;
+    throw cause;
+  });
+  if (source === null) return null;
+  let journal;
+  try { journal = JSON.parse(source); } catch { throw gitError("Ship journal is invalid JSON", "SHIP_JOURNAL_INVALID"); }
+  if (journal.schemaVersion !== 1 || !Array.isArray(journal.commits) || !Array.isArray(journal.originalPreview?.groups)) {
+    throw gitError("Ship journal is malformed", "SHIP_JOURNAL_INVALID");
+  }
+  const head = await getHead(projectRoot);
+  if (await getBranch(projectRoot) !== journal.originalPreview.branch) throw gitError("Branch changed after Ship started", "SHIP_DRIFT");
+  let expectedHead = journal.originalPreview.head;
+  const groups = new Map(journal.originalPreview.groups.map((group) => [group.id, group]));
+  const seen = new Set();
+  for (const commit of journal.commits) {
+    const group = groups.get(commit.group);
+    if (!group || seen.has(commit.group) || commit.headBefore !== expectedHead
+      || commit.message !== group.message || commit.diffHash !== group.diffHash
+      || !equalArrays(commit.files, group.files)) throw gitError("Ship journal does not match its approved sequence", "SHIP_JOURNAL_INVALID");
+    await verifyJournalCommit(projectRoot, commit);
+    seen.add(commit.group);
+    expectedHead = commit.commit;
+  }
+  if (journal.pending && head !== expectedHead) {
+    const group = groups.get(journal.pending.group);
+    if (!group || seen.has(group.id) || journal.pending.headBefore !== expectedHead) throw gitError("Pending Ship group is invalid", "SHIP_JOURNAL_INVALID");
+    const recovered = { group: group.id, commit: head, headBefore: expectedHead, message: group.message, files: group.files, diffHash: group.diffHash };
+    await verifyJournalCommit(projectRoot, recovered);
+    journal.commits.push(recovered);
+    expectedHead = head;
+    journal.pending = null;
+    journal.recoveredPendingCommit = true;
+  }
+  if (head !== expectedHead) throw gitError("HEAD changed outside the recorded Ship sequence", "SHIP_DRIFT");
+  journal.status = journal.commits.length === groups.size ? "completed" : journal.status === "completed" ? "interrupted" : journal.status;
+  return journal;
 }
 
 export async function executeShip(projectRoot, preview, approvalFingerprint, options = {}) {
@@ -471,6 +529,7 @@ export async function executeShip(projectRoot, preview, approvalFingerprint, opt
       excludedChangedFiles: preview.excludedChangedFiles,
       checks: preview.checks,
       pendingManualChecks: preview.pendingManualChecks,
+      contractFingerprint: preview.contractFingerprint ?? null,
     }))
     .digest("hex");
   if (expectedFingerprint !== approvalFingerprint) {
@@ -479,9 +538,17 @@ export async function executeShip(projectRoot, preview, approvalFingerprint, opt
   if (preview.pendingManualChecks.length > 0 && options.pendingAcknowledgement !== approvalFingerprint) {
     throw gitError("Pending manual checks require a separate exact-preview acknowledgement", "SHIP_PENDING_ACK_REQUIRED");
   }
+  let journal = options.journalPath ? await inspectShipJournal(projectRoot, options.journalPath) : null;
+  if (journal && journal.contractFingerprint !== preview.contractFingerprint) {
+    throw gitError("Ship contract changed after a partial attempt", "SHIP_CONTRACT_STALE");
+  }
+  if (journal?.status === "completed" && journal.previewFingerprint === approvalFingerprint) {
+    if (options.journalPath) await writeJsonAtomic(options.journalPath, journal);
+    return { shipped: true, commits: journal.commits, pushed: false, recovered: true };
+  }
   const currentHead = await getHead(projectRoot);
   const currentWorktree = await worktreeFingerprint(projectRoot);
-  if (currentHead !== preview.head || currentWorktree.hash !== preview.worktreeHash) {
+  if (currentHead !== preview.head || currentWorktree.hash !== preview.worktreeHash || await getBranch(projectRoot) !== preview.branch) {
     throw gitError("HEAD or worktree changed after Ship preview", "SHIP_DRIFT");
   }
   const initialCached = await cachedFiles(projectRoot);
@@ -491,40 +558,70 @@ export async function executeShip(projectRoot, preview, approvalFingerprint, opt
     throw gitError(`Unrelated staged files block Ship: ${unrelatedCached.join(", ")}`, "SHIP_INDEX_DIRTY");
   }
 
-  const commits = [];
-  for (let index = 0; index < preview.groups.length; index += 1) {
-    const group = preview.groups[index];
-    for (const futureGroup of preview.groups.slice(index)) {
-      for (const filePath of futureGroup.files) {
-        if ((await contentHash(projectRoot, filePath)) !== preview.fileHashes[filePath]) {
-          throw gitError(`File changed during Ship: ${filePath}`, "SHIP_DRIFT");
+  journal ??= { schemaVersion: 1, contractFingerprint: preview.contractFingerprint, originalPreview: preview, commits: [] };
+  journal.previewFingerprint = approvalFingerprint;
+  journal.status = "running";
+  journal.pending = null;
+  const persist = async () => {
+    if (options.journalPath) await writeJsonAtomic(options.journalPath, journal);
+  };
+  await persist();
+  const commits = journal.commits;
+  try {
+    for (let index = 0; index < preview.groups.length; index += 1) {
+      const group = preview.groups[index];
+      for (const futureGroup of preview.groups.slice(index)) {
+        for (const filePath of futureGroup.files) {
+          if ((await contentHash(projectRoot, filePath)) !== preview.fileHashes[filePath]) {
+            throw gitError(`File changed during Ship: ${filePath}`, "SHIP_DRIFT");
+          }
         }
       }
+      await runGit(projectRoot, ["add", "-A", "--", ...group.files]);
+      const staged = await cachedFiles(projectRoot);
+      const expected = [...group.files].sort();
+      if (!equalArrays(staged, expected)) {
+        throw gitError(`Staged files do not match group ${group.id}`, "SHIP_STAGE_MISMATCH", { staged, expected });
+      }
+      const diff = await runGit(projectRoot, ["diff", "--cached", "--quiet"], { allowFailure: true });
+      if (diff.exitCode === 0) throw gitError(`Commit group ${group.id} has no staged changes`, "SHIP_GROUP_EMPTY");
+      if (diff.exitCode !== 1) throw gitError(`Cannot inspect staged changes for ${group.id}`, "SHIP_DIFF_FAILED");
+      const stagedDiff = await runGit(projectRoot, ["diff", "--cached", "--binary", "--no-ext-diff", "--no-renames", "--", ...group.files]);
+      if (createHash("sha256").update(stagedDiff.stdout).digest("hex") !== group.diffHash) {
+        throw gitError("Staged diff differs from the approved preview", "SHIP_DRIFT");
+      }
+      const headBefore = await getHead(projectRoot);
+      journal.pending = { group: group.id, headBefore };
+      await persist();
+      await runGit(projectRoot, ["commit", "-m", group.message]);
+      const commit = await getHead(projectRoot);
+      const entry = { group: group.id, commit, headBefore, message: group.message, files: group.files, diffHash: group.diffHash };
+      commits.push(entry);
+      journal.pending = null;
+      await persist();
+      await verifyJournalCommit(projectRoot, entry);
+      const remainingCached = await cachedFiles(projectRoot);
+      if (remainingCached.length > 0) {
+        throw gitError("Commit hooks left staged changes; Ship stopped after a partial commit", "SHIP_HOOK_DRIFT", { commits });
+      }
+      const status = await getStatus(projectRoot);
+      const committedStillDirty = status.map((record) => record.path).filter((filePath) => group.files.includes(filePath));
+      if (committedStillDirty.length > 0) {
+        throw gitError("Commit hooks changed committed files; Ship stopped after a partial commit", "SHIP_HOOK_DRIFT", {
+          commits,
+          files: committedStillDirty,
+        });
+      }
     }
-    await runGit(projectRoot, ["add", "-A", "--", ...group.files]);
-    const staged = await cachedFiles(projectRoot);
-    const expected = [...group.files].sort();
-    if (!equalArrays(staged, expected)) {
-      throw gitError(`Staged files do not match group ${group.id}`, "SHIP_STAGE_MISMATCH", { staged, expected });
-    }
-    const diff = await runGit(projectRoot, ["diff", "--cached", "--quiet"], { allowFailure: true });
-    if (diff.exitCode === 0) throw gitError(`Commit group ${group.id} has no staged changes`, "SHIP_GROUP_EMPTY");
-    if (diff.exitCode !== 1) throw gitError(`Cannot inspect staged changes for ${group.id}`, "SHIP_DIFF_FAILED");
-    await runGit(projectRoot, ["commit", "-m", group.message]);
-    const commit = await getHead(projectRoot);
-    commits.push({ group: group.id, commit, message: group.message, files: group.files });
-    const remainingCached = await cachedFiles(projectRoot);
-    if (remainingCached.length > 0) {
-      throw gitError("Commit hooks left staged changes; Ship stopped after a partial commit", "SHIP_HOOK_DRIFT", { commits });
-    }
-    const status = await getStatus(projectRoot);
-    const committedStillDirty = status.map((record) => record.path).filter((filePath) => group.files.includes(filePath));
-    if (committedStillDirty.length > 0) {
-      throw gitError("Commit hooks changed committed files; Ship stopped after a partial commit", "SHIP_HOOK_DRIFT", {
-        commits,
-        files: committedStillDirty,
-      });
-    }
+  } catch (cause) {
+    journal.status = "failed";
+    journal.error = { code: cause.code ?? "SHIP_FAILED", message: cause.message };
+    await persist();
+    cause.details = { ...cause.details, commits, journalPath: options.journalPath ?? null };
+    throw cause;
   }
+  journal.status = "completed";
+  delete journal.error;
+  await persist();
   return { shipped: true, commits, pushed: false };
 }

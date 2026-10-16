@@ -28,10 +28,10 @@ export const TRANSITIONS = Object.freeze({
   plan_draft: ["plan_verified", "discussed"],
   plan_verified: ["executing", "plan_draft"],
   executing: ["execution_complete", "plan_draft"],
-  execution_complete: ["verifying", "executing"],
-  verifying: ["verified", "verified_pending", "verification_failed"],
-  verified: ["shipped", "roadmap_ready"],
-  verified_pending: ["verified", "shipped", "verification_failed", "roadmap_ready"],
+  execution_complete: ["verifying", "executing", "plan_draft"],
+  verifying: ["verified", "verified_pending", "verification_failed", "plan_draft"],
+  verified: ["shipped", "roadmap_ready", "plan_draft"],
+  verified_pending: ["verified", "shipped", "verification_failed", "roadmap_ready", "plan_draft"],
   verification_failed: ["executing", "plan_draft"],
   shipped: [],
 });
@@ -346,6 +346,9 @@ export async function initWork(projectRoot, options) {
       adoptedBaselineFiles: [],
       cleanedBaselineFiles: [],
       externalResearchApprovals: [],
+      planApprovals: {},
+      executionRecords: {},
+      verificationRecords: {},
       history: [{ from: null, to: "initialized", at: now, reason: "work initialized" }],
       createdAt: now,
       updatedAt: now,
@@ -431,6 +434,8 @@ export async function transitionWork(projectRoot, record, to, options = {}) {
     if (to === "plan_draft" && !state.activePhase) {
       throw error("Select an active roadmap phase before creating its plan", "ACTIVE_PHASE_REQUIRED");
     }
+    const { transitionGate } = await import("./workflow.mjs");
+    state = await transitionGate(projectRoot, state, to, options);
     const now = new Date().toISOString();
     const from = state.status;
     state.status = to;

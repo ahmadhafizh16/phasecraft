@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import path from "node:path";
+import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import {
@@ -26,6 +27,10 @@ import {
   findGitRoot,
   getStatus,
 } from "./git.mjs";
+import { stageInvocation, workflowHost } from "./hosts.mjs";
+import {
+  approvedShipGroups, assertPlanApproval, checkpointTask, preflightWorkflow, readinessReport,
+} from "./workflow.mjs";
 
 function parseArguments(argv) {
   const positional = [];
@@ -111,6 +116,10 @@ function help() {
       "research-approve": "Record one work-scoped external research approval",
       "phase-start": "Select the next roadmap phase for just-in-time planning",
       "verification-result": "Record verification outcome and pending manual checks",
+      "approve-plan": "Validate the exact audited plan and record its runtime approval receipt",
+      "task-checkpoint": "Persist a completed task, checks, and cumulative recovery patch",
+      doctor: "Report readiness, artifact drift, pending HTML feedback, and recovery actions",
+      resume: "Read durable task and Ship progress and report the next explicit action",
       "handoff-list": "List durable agent handoffs for a work item",
       "handoff-write": "Atomically write the next immutable agent handoff",
       "review-start": "Start the authenticated local artifact review UI",
@@ -188,14 +197,33 @@ async function run(argv) {
       id: typeof flags.work === "string" ? flags.work : null,
       branch: typeof flags.branch === "string" ? flags.branch : null,
     });
+    const stage = required(flags, "stage");
+    const preflight = assertStage(resolved.state, stage);
+    await preflightWorkflow(root, resolved.state, stage);
     return {
       work: resolved.record,
-      preflight: assertStage(resolved.state, required(flags, "stage")),
+      preflight,
       paths: {
         artifactRoot: resolved.state.artifactRoot,
         localWorkRoot: resolved.state.localWorkRoot,
       },
     };
+  }
+
+  if (command === "approve-plan" || command === "task-checkpoint") {
+    const root = await projectRoot(flags);
+    const resolved = await resolveWork(root, { id: typeof flags.work === "string" ? flags.work : null });
+    if (command === "approve-plan") {
+      assertStage(resolved.state, "verify-plan");
+      const state = await transitionWork(root, resolved.record, "plan_verified", {
+        expectedRevision: resolved.state.revision, approvePlan: true, reason: "exact audited plan approved",
+      });
+      return { work: state.id, state, approval: state.planApprovals[state.activePhase] };
+    }
+    const state = await checkpointTask(root, resolved.record, required(flags, "task"), {
+      checks: await jsonFromFlagOrFile(flags, "checks", []), allowSensitive: flags["allow-sensitive"] === true,
+    });
+    return { work: state.id, revision: state.revision, checkpoint: state.executionRecords[state.activePhase].checkpoints.at(-1) };
   }
 
   if (command === "transition") {
@@ -219,13 +247,15 @@ async function run(argv) {
     return { work: resolved.record.id, state };
   }
 
-  if (command === "status") {
+  if (["status", "doctor", "resume"].includes(command)) {
     const root = await projectRoot(flags);
     if (flags.all) return { root, registry: await loadRegistry(root) };
-    return resolveWork(root, {
+    const resolved = await resolveWork(root, {
       id: typeof flags.work === "string" ? flags.work : positional[0],
       branch: typeof flags.branch === "string" ? flags.branch : null,
     });
+    const readiness = await readinessReport(root, resolved.state, { host: workflowHost(flags.host) });
+    return command === "status" ? { ...resolved, readiness } : readiness;
   }
 
   if (command === "handoff-list" || command === "handoff-write") {
@@ -263,8 +293,9 @@ async function run(argv) {
     return withWorkLock(root, resolved.record.key, () => startReview(resolved.state, {
       work: resolved.record.id,
       artifact: typeof flags.artifact === "string" ? flags.artifact : "plan",
-      noOpen: flags["no-open"] === true,
-      detached: true,
+       noOpen: flags["no-open"] === true,
+       detached: true,
+       host: workflowHost(flags.host),
     }));
   }
 
@@ -275,11 +306,18 @@ async function run(argv) {
       branch: typeof flags.branch === "string" ? flags.branch : null,
     });
     const { listFeedback, showFeedback, writeFeedbackResolution } = await import("./feedback.mjs");
-    if (command === "feedback-list") return { work: resolved.record.id, feedback: await listFeedback(resolved.state) };
+    const host = workflowHost(flags.host);
+    if (command === "feedback-list") {
+      let feedback = await listFeedback(resolved.state);
+      if (flags.pending) feedback = feedback.filter((batch) => !batch.resolved || batch.needsClarification);
+      return { work: resolved.record.id, host, feedback: feedback.map((batch) => ({
+        ...batch, command: stageInvocation(host, "plan", resolved.record.id, batch.id),
+      })) };
+    }
     const feedback = required(flags, "feedback");
     if (command === "feedback-show") {
       const shown = await showFeedback(resolved.state, feedback, { recoverProjection: flags.recover === true });
-      return { work: resolved.record.id, ...shown };
+      return { work: resolved.record.id, host, command: stageInvocation(host, "plan", resolved.record.id, feedback), ...shown };
     }
     const data = await jsonFromFlagOrFile(flags, "data", null);
     const shown = await showFeedback(resolved.state, feedback, { recoverProjection: true });
@@ -382,7 +420,7 @@ async function run(argv) {
 
   if (command === "phase-start") {
     const root = await projectRoot(flags);
-    let resolved = await resolveWork(root, {
+    const resolved = await resolveWork(root, {
       id: typeof flags.work === "string" ? flags.work : null,
       branch: typeof flags.branch === "string" ? flags.branch : null,
     });
@@ -390,6 +428,12 @@ async function run(argv) {
     if (!/^P-\d{2}$/u.test(phase)) {
       const error = new Error("--phase must use the P-01 form");
       error.code = "OPTION_INVALID";
+      throw error;
+    }
+    if (resolved.state.completedPhases.some((entry) => entry.id === phase)
+      || (["verified", "verified_pending"].includes(resolved.state.status) && resolved.state.activePhase === phase)) {
+      const error = new Error(`Phase ${phase} is already completed`);
+      error.code = "PHASE_ALREADY_COMPLETED";
       throw error;
     }
     if (["verified", "verified_pending"].includes(resolved.state.status)) {
@@ -466,7 +510,7 @@ async function run(argv) {
     }
     const allPending = [...resolved.state.pendingManualChecks];
     for (const check of pending) {
-      if (!allPending.some((existing) => existing.id === check.id)) {
+      if (!allPending.some((existing) => existing.id === check.id && existing.phase === resolved.state.activePhase)) {
         allPending.push({ ...check, phase: resolved.state.activePhase, recordedAt: new Date().toISOString() });
       }
     }
@@ -474,6 +518,7 @@ async function run(argv) {
     const state = await transitionWork(root, resolved.record, outcome, {
       expectedRevision: resolved.state.revision,
       reason: "independent verification completed",
+      verificationChecks: await jsonFromFlagOrFile(flags, "checks", []),
       update: (current) => {
         current.pendingManualChecks = allPending;
         return current;
@@ -604,6 +649,7 @@ async function runGitWorkflowCommand(command, flags) {
 
   if (command === "snapshot") {
     assertStage(resolved.state, "execute");
+    const approval = await assertPlanApproval(resolved.state);
     const task = required(flags, "task");
     if (!/^T-\d{3}$/u.test(task)) {
       const error = new Error("--task must use the T-001 form");
@@ -611,6 +657,11 @@ async function runGitWorkflowCommand(command, flags) {
       throw error;
     }
     const files = await jsonFromFlagOrFile(flags, "files", []);
+    if (!approval.tasks.some((entry) => entry.id === task) || !Array.isArray(files) || files.some((file) => !approval.files.includes(file))) {
+      const error = new Error("Snapshots must use an approved task and approved phase files");
+      error.code = "PLAN_SCOPE_INVALID";
+      throw error;
+    }
     const config = await loadConfig(root);
     return createPatchSnapshot(
       root,
@@ -624,37 +675,63 @@ async function runGitWorkflowCommand(command, flags) {
     );
   }
 
-  if (command === "ship-preview") {
-    assertStage(resolved.state, "ship");
-    const groupsInput = await jsonFromFlagOrFile(flags, "groups", null);
-    const groups = Array.isArray(groupsInput) ? groupsInput : groupsInput?.groups;
-    if (!Array.isArray(groups)) {
-      const error = new Error("--groups or --groups-file must provide an array or { groups: [] }");
-      error.code = "OPTION_JSON_INVALID";
+  return withWorkLock(root, resolved.record.key, async () => {
+    const current = await resolveWork(root, { id: resolved.record.id });
+    assertStage(current.state, "ship");
+    const approved = await approvedShipGroups(root, current.state);
+    if (command === "ship-preview") {
+      const groupsInput = await jsonFromFlagOrFile(flags, "groups", null);
+      const groups = groupsInput === null ? approved.groups : Array.isArray(groupsInput) ? groupsInput : groupsInput?.groups;
+      const { mergeCommitGroups, stableStringify } = await import("./git.mjs");
+      const shape = (values) => mergeCommitGroups(values).map(({ id, message, files, dependsOn }) => ({ id, message, files, dependsOn }));
+      if (approved.journal?.status === "completed") {
+        return { work: current.state.id, shipped: true, commits: approved.journal.commits, nextAction: "Write SHIP.md and transition to shipped" };
+      }
+      if (!Array.isArray(groups) || stableStringify(shape(groups)) !== stableStringify(shape(approved.groups))) {
+        const error = new Error("Ship groups must exactly match runtime-approved plan groups");
+        error.code = "SHIP_SCOPE_INVALID";
+        throw error;
+      }
+      const checks = Object.entries(current.state.verificationRecords).flatMap(([phase, record]) => record.checks.map((check) => ({ ...check, phase })));
+      for (const [name, expected] of [["checks", checks], ["pending", current.state.pendingManualChecks]]) {
+        const provided = await jsonFromFlagOrFile(flags, name, expected);
+        if (stableStringify(provided) !== stableStringify(expected)) {
+          const error = new Error(`Ship ${name} must match recorded verification`);
+          error.code = "SHIP_VERIFICATION_MISMATCH";
+          throw error;
+        }
+      }
+      const preview = await createShipPreview(root, groups, {
+        baseline: await readJson(baselinePath),
+        adoptedFiles: current.state.adoptedBaselineFiles,
+        checks, pendingManualChecks: current.state.pendingManualChecks,
+        contractFingerprint: approved.contractFingerprint,
+      });
+      const previewPath = path.join(resolved.state.localWorkRoot, "ship", "preview.json");
+      await writeJsonAtomic(previewPath, preview);
+      return { ...preview, previewPath, previousCommits: approved.journal?.commits ?? [] };
+    }
+
+    const previewPath = path.join(resolved.state.localWorkRoot, "ship", "preview.json");
+    const preview = await readJson(previewPath);
+    if (preview.contractFingerprint !== approved.contractFingerprint) {
+      const error = new Error("Workflow approvals changed after Ship preview");
+      error.code = "SHIP_CONTRACT_STALE";
       throw error;
     }
-    const preview = await createShipPreview(root, groups, {
-      baseline: await readJson(baselinePath),
-      adoptedFiles: resolved.state.adoptedBaselineFiles,
-      checks: await jsonFromFlagOrFile(flags, "checks", []),
-      pendingManualChecks: await jsonFromFlagOrFile(flags, "pending", resolved.state.pendingManualChecks),
+    const result = await executeShip(root, preview, required(flags, "approval"), {
+      pendingAcknowledgement: typeof flags["ack-pending"] === "string" ? flags["ack-pending"] : null,
+      journalPath: path.join(current.state.localWorkRoot, "ship", "journal.json"),
     });
-    const previewPath = path.join(resolved.state.localWorkRoot, "ship", "preview.json");
-    await writeJsonAtomic(previewPath, preview);
-    return { ...preview, previewPath };
-  }
-
-  assertStage(resolved.state, "ship");
-  const previewPath = path.join(resolved.state.localWorkRoot, "ship", "preview.json");
-  const preview = await readJson(previewPath);
-  const result = await executeShip(root, preview, required(flags, "approval"), {
-    pendingAcknowledgement: typeof flags["ack-pending"] === "string" ? flags["ack-pending"] : null,
+    await writeJsonAtomic(path.join(resolved.state.localWorkRoot, "ship", "result.json"), result);
+    return result;
   });
-  await writeJsonAtomic(path.join(resolved.state.localWorkRoot, "ship", "result.json"), result);
-  return result;
 }
 
-const invokedDirectly = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+let invokedDirectly = false;
+try {
+  invokedDirectly = Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+} catch {}
 if (invokedDirectly) {
   run(process.argv.slice(2)).then(output).catch((cause) => {
     process.stderr.write(`${JSON.stringify({

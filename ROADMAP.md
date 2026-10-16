@@ -1,6 +1,6 @@
 # Phasecraft Implementation Roadmap
 
-The roadmap tracks implementation of [the v0.1 specification](docs/SPEC.md). Detailed future planning is created just in time; this repository does not use Phasecraft to commit itself yet because Git initialization is intentionally deferred.
+The roadmap tracks implementation of [the workflow specification](docs/SPEC.md). Detailed future planning is created just in time.
 
 ## Phases
 
@@ -15,8 +15,27 @@ The roadmap tracks implementation of [the v0.1 specification](docs/SPEC.md). Det
 | P-07 | Conformance and dogfooding. | Syntax check, full `node:test`, installer fixture, CLI Init-to-Ship fixture, and OpenCode resolved-config validation pass. | completed |
 | P-08 | Build local interactive artifact review. | Deterministic anchors, immutable feedback, authenticated loopback UI, planner resolutions, security tests, and installer coverage pass. | completed |
 | P-09 | Package a host-neutral workflow. | Public npm metadata, MIT licensing, and tested OpenCode, Claude Code, Codex, and Pi projections exist. | completed |
+| P-10 | Bind approvals and make execution, Ship, and HTML response handoffs resumable across hosts. | Runtime gate, checkpoint, interruption recovery, host-aware feedback, packed-package, and conformance tests pass. | completed |
 
-## Current Phase: P-09
+## Current Phase: P-10
+
+### v0.5 Goal
+
+Make approved work runtime-verifiable and resumable across OpenCode, Claude Code, Codex, and Pi. Deliver exact plan-approval receipts, durable task checkpoints and commit journals, read-only readiness/recovery, and interactive HTML responses that planning agents can discover and read. Keep the existing nine explicit workflow stages.
+
+### v0.5 Validation
+
+- Reject raw approval bypasses, stale plan/HTML/audit/evidence, unresolved dispositions, and unapproved Ship scope.
+- Preserve task dependencies, outside-scope work, sensitive patch policy, and repeated-task history.
+- Recover partial Ship and the commit-before-journal interruption window without duplicate commits.
+- Publish comments against generated HTML and read exact responses from all four host adapters.
+- Check every script and install/check/uninstall the actual npm tarball across hosts.
+
+### v0.5 Exit
+
+P-10 completed with shared approval/checkpoint/recovery contracts, host-aware interactive HTML responses, updated canonical prompts and all four projections, and an upgrade guide. `npm run check`, all 130 tests, `npm run pack:check`, and `git diff --check` pass. The test suite includes offline installation/check/uninstall of the actual npm tarball; repository CI is configured for Node.js 20, 22, and 24 on Linux and macOS.
+
+## Previous Phase: P-09
 
 ### Goal
 
@@ -52,7 +71,7 @@ P-09 completed with a public MIT package definition, coexistence-safe host manif
 
 - Push and pull-request creation.
 - Issue-tracker APIs.
-- CI orchestration.
+- CI orchestration for users' application workflows.
 - Native Windows outside WSL.
 - Hunk-based separation of pre-existing edits.
 - Automatic secret redaction.

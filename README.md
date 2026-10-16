@@ -8,12 +8,12 @@
   </p>
   <p><strong>One workflow package for OpenCode, Claude Code, Codex, and Pi.</strong></p>
   <p>
-    <img alt="Version 0.4.0" src="https://img.shields.io/badge/version-0.4.0-6366f1?style=flat-square">
-    <img alt="npm package" src="https://img.shields.io/badge/npm-%40ahmadhafizh16%2Fphasecraft-CB3837?style=flat-square&logo=npm&logoColor=white">
+    <img alt="Version 0.5.0" src="https://img.shields.io/badge/version-0.5.0-6366f1?style=flat-square">
+    <img alt="npm package" src="https://img.shields.io/badge/npm-%40ahmadhm%2Fphasecraft-CB3837?style=flat-square&logo=npm&logoColor=white">
     <img alt="Node.js 20 or newer" src="https://img.shields.io/badge/Node.js-%E2%89%A520-339933?style=flat-square&logo=nodedotjs&logoColor=white">
     <img alt="Mermaid diagrams" src="https://img.shields.io/badge/diagrams-Mermaid-22d3ee?style=flat-square">
     <img alt="Four coding agent hosts" src="https://img.shields.io/badge/hosts-OpenCode%20%7C%20Claude%20%7C%20Codex%20%7C%20Pi-111827?style=flat-square">
-    <img alt="108 tests passing" src="https://img.shields.io/badge/tests-108%20passing-16a34a?style=flat-square">
+    <img alt="Node.js test suite" src="https://img.shields.io/badge/tests-node%3Atest-16a34a?style=flat-square">
   </p>
   <p>
     <a href="#installation">Installation</a> &middot;
@@ -65,6 +65,15 @@ The same runtime and workflow contracts are projected into each host during inst
 
 The deterministic state, artifact, review, and Git controls are identical. Host-level permission capabilities differ; see [Host Compatibility](docs/HOSTS.md) before enabling unattended tool access.
 
+### New in v0.5
+
+- **Runtime-bound approval:** `approve-plan` binds the plan, HTML, audit, evidence registry, authorized files, tasks, and commit groups. Execute cannot bypass that receipt with a raw state transition.
+- **Durable progress:** task checkpoints preserve actual check results and cumulative recovery patches; Ship journals each commit and resumes remaining groups after a fresh preview and approval.
+- **Readiness and recovery:** `phasecraft runtime doctor --work <id>` and `resume` report drift, completed/remaining tasks, commits, pending HTML feedback, and the next host-correct command.
+- **Interactive planning on every host:** publish element or selected-text comments from the generated HTML review page, then let the planner read the durable response with `feedback-show`. Codex receives a `$phasecraft-plan` invocation; the other hosts receive slash commands.
+
+See [the v0.5 guide](docs/V0.5.md) for runtime commands, recovery, and upgrading existing work.
+
 <a id="installation"></a>
 
 ## ⚡ Installation
@@ -81,23 +90,23 @@ Run the command from your application repository. Choose the host you use:
 
 ```bash
 # OpenCode
-npx @ahmadhafizh16/phasecraft@latest install --host opencode
+npx @ahmadhm/phasecraft@latest install --host opencode
 
 # Claude Code
-npx @ahmadhafizh16/phasecraft@latest install --host claude
+npx @ahmadhm/phasecraft@latest install --host claude
 
 # Codex
-npx @ahmadhafizh16/phasecraft@latest install --host codex
+npx @ahmadhm/phasecraft@latest install --host codex
 
 # Pi
-npx @ahmadhafizh16/phasecraft@latest install --host pi
+npx @ahmadhm/phasecraft@latest install --host pi
 ```
 
 Use `--target` when installing into another repository, or install every adapter for a shared project:
 
 ```bash
-npx @ahmadhafizh16/phasecraft@latest install --host claude --target /path/to/project
-npx @ahmadhafizh16/phasecraft@latest install --host all --target /path/to/your/project
+npx @ahmadhm/phasecraft@latest install --host claude --target /path/to/project
+npx @ahmadhm/phasecraft@latest install --host all --target /path/to/your/project
 ```
 
 The target is the application project root. Restart OpenCode, Claude Code, or Codex after installation; in Pi, run `/reload`. See the [host compatibility guide](docs/HOSTS.md) for generated layouts and safety differences.
@@ -384,6 +393,8 @@ Models are inherited from the selected coding host and project configuration. Ph
 | --- | --- | --- |
 | CLI | `runtime/phasecraft.mjs` | Argument parsing and deterministic command routing |
 | State | `runtime/state.mjs` | Safe templates, registry, revisions, locks, and legal transitions |
+| Workflow contracts | `runtime/workflow.mjs` | Exact approval receipts, task checkpoints, recorded verification, readiness, and recovery |
+| Runtime host identity | `runtime/hosts.mjs` | Installed-host discovery and correct planner feedback invocations |
 | Knowledge | `runtime/knowledge.mjs` | Authority discovery, source hashing, and drift detection |
 | Artifacts | `runtime/artifacts.mjs` | Evidence, roadmap, and restricted plan validation |
 | Handoffs | `runtime/handoffs.mjs` | Validated immutable agent handoff allocation and discovery |
@@ -398,26 +409,26 @@ Models are inherited from the selected coding host and project configuration. Ph
 Each adapter bundles the same runtime under its host directory. Inspect the package runtime commands with:
 
 ```bash
-npx @ahmadhafizh16/phasecraft@latest runtime help
+npx @ahmadhm/phasecraft@latest runtime help
 ```
 
 ## 📦 Installer Operations
 
 ```bash
 # Self-contained project install
-npx @ahmadhafizh16/phasecraft@latest install --host claude --target /path/to/project
+npx @ahmadhm/phasecraft@latest install --host claude --target /path/to/project
 
 # Install all supported host adapters
-npx @ahmadhafizh16/phasecraft@latest install --host all --target /path/to/project
+npx @ahmadhm/phasecraft@latest install --host all --target /path/to/project
 
 # Update an existing managed install
-npx @ahmadhafizh16/phasecraft@latest install --host claude --target /path/to/project
+npx @ahmadhm/phasecraft@latest install --host claude --target /path/to/project
 
 # Non-mutating health check
-npx @ahmadhafizh16/phasecraft@latest check --host claude --target /path/to/project
+npx @ahmadhm/phasecraft@latest check --host claude --target /path/to/project
 
 # Remove only unchanged managed files
-npx @ahmadhafizh16/phasecraft@latest uninstall --host claude --target /path/to/project
+npx @ahmadhm/phasecraft@latest uninstall --host claude --target /path/to/project
 
 # Individual-file symlinks for Phasecraft development
 node bin/install.mjs install --host claude --target /path/to/project --link
@@ -443,6 +454,7 @@ The `node:test` suite uses temporary Git repositories and covers state transitio
 | [Specification](docs/SPEC.md) | Behavioral contract, state machine, evidence, and Git safety |
 | [Artifact schemas](docs/ARTIFACT-SCHEMAS.md) | Exact project tree, JSON records, and restricted Markdown grammar |
 | [Host compatibility](docs/HOSTS.md) | Installation layouts, invocation syntax, and host safety differences |
+| [v0.5 guide](docs/V0.5.md) | Approval receipts, resumable execution/Ship, readiness, and interactive HTML responses |
 | [Roadmap](ROADMAP.md) | Implementation phases, delivered capabilities, and deferred scope |
 
 ## 🚧 Current Scope

@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 
-export const SUPPORTED_HOSTS = Object.freeze(["opencode", "claude", "codex", "pi"]);
+import { SUPPORTED_HOSTS } from "../runtime/hosts.mjs";
+export { SUPPORTED_HOSTS };
 
 const HOSTS = Object.freeze({
   opencode: {
@@ -91,6 +92,7 @@ function yaml(value) {
 function rewriteHostReferences(source, host, commandName = null) {
   const config = getHostConfig(host);
   let result = source.replaceAll(".opencode/phasecraft/runtime", config.runtimeRoot);
+  result = result.replaceAll("--host opencode", `--host ${host}`);
   if (host === "codex") {
     result = result.replace(/\/phasecraft-([a-z][a-z-]*)/gu, "$phasecraft-$1");
     const argumentText = commandName

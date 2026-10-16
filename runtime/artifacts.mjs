@@ -113,7 +113,7 @@ export function parseRestrictedMarkdown(source) {
       section.entries.push(entry);
       continue;
     }
-    const field = text.match(/^-\s+([A-Za-z][A-Za-z ]+):\s*(.*)$/u);
+    const field = text.match(/^-\s+([A-Za-z][A-Za-z0-9 /-]+):\s*(.*)$/u);
     if (field && entry) {
       const name = field[1].trim().toLowerCase();
       if (!entry.duplicateFields) entry.duplicateFields = [];
@@ -462,7 +462,7 @@ export function validateEvidenceRegistry(registry) {
   if (!Array.isArray(registry.entries)) errors.push(issue("Evidence registry requires an entries array"));
   const ids = new Set();
   const expectedPrefixes = { evidence: "E", decision: "D", proposal: "P", unknown: "U", risk: "R" };
-  for (const [index, entry] of (registry.entries ?? []).entries()) {
+  for (const [index, entry] of (Array.isArray(registry.entries) ? registry.entries : []).entries()) {
     const at = `entries[${index}]`;
     if (!/^[EDPUR]-\d{3,}$/u.test(entry?.id ?? "")) errors.push(issue(`${at}.id is invalid`));
     if (ids.has(entry?.id)) errors.push(issue(`Duplicate evidence id ${entry.id}`));

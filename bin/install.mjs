@@ -326,7 +326,7 @@ function parseCli(argv) {
 }
 
 export function installerHelp() {
-  return `Phasecraft\n\nUsage:\n  phasecraft install --host <host> [--target PATH] [--link]\n  phasecraft check --host <host> [--target PATH]\n  phasecraft uninstall --host <host> [--target PATH]\n  phasecraft runtime <command> [options]\n\nHosts:\n  ${SUPPORTED_HOSTS.join(", ")}, all\n\nExamples:\n  npx @ahmadhafizh16/phasecraft install --host opencode\n  npx @ahmadhafizh16/phasecraft install --host all --target /path/to/project\n`;
+  return `Phasecraft\n\nUsage:\n  phasecraft install --host <host> [--target PATH] [--link]\n  phasecraft check --host <host> [--target PATH]\n  phasecraft uninstall --host <host> [--target PATH]\n  phasecraft runtime <command> [options]\n\nHosts:\n  ${SUPPORTED_HOSTS.join(", ")}, all\n\nExamples:\n  npx @ahmadhm/phasecraft install --host opencode\n  npx @ahmadhm/phasecraft install --host all --target /path/to/project\n`;
 }
 
 export async function runInstaller(argv) {

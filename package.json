@@ -1,6 +1,6 @@
 {
-  "name": "@ahmadhafizh16/phasecraft",
-  "version": "0.4.0",
+  "name": "@ahmadhm/phasecraft",
+  "version": "0.5.0",
   "description": "Evidence-first engineering workflow for OpenCode, Claude Code, Codex, and Pi",
   "type": "module",
   "license": "MIT",
@@ -50,7 +50,7 @@
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "check": "node --check runtime/*.mjs && node --check bin/*.mjs",
+    "check": "node bin/check.mjs",
     "pack:check": "npm pack --dry-run"
   }
 }
